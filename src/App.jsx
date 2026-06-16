@@ -602,23 +602,29 @@ return sl>0.25?"up":sl<-0.25?"down":"flat";
 }
 
 function calcStats(gs,player,season){
-// strictly season-independent
 const pg=gs.filter(g=>g.player===player&&g.season===season).sort((a,b)=>new Date(a.date)-new Date(b.date));
-if(!pg.length)return{player,gameCount:0,season,hasEnough:false};
+if(!pg.length)return{player,gameCount:0,season,hasEnough:false,canAvg:false,canCons:false,canStretch:false,canLast5:false,canMomentum:false};
 const sc=pg.map(g=>g.score);
+const n=sc.length;
+const canAvg=n>=1;
+const canCons=n>=2;
+const canStretch=n>=5;
+const canLast5=n>=5;
+const canMomentum=n>=MIN_GAMES;
+const hasEnough=n>=MIN_GAMES;
 const avg=mean(sc);
-const last5Avg=sc.length>=5?mean(sc.slice(-5)):null;
-const momentum=last5Avg!=null?last5Avg-avg:null;
-const hasEnough=sc.length>=MIN_GAMES;
+const last5Avg=canLast5?mean(sc.slice(-5)):null;
+const momentum=canMomentum&&avg!=null?last5Avg-avg:null;
 return{
-player,season,gameCount:sc.length,hasEnough,
-avg,high:Math.max(...sc),low:Math.min(...sc),stdDev:sd(sc),
-last5:last5Avg,momentum:momentum,
-stretch:hasEnough?bestStretch(sc):null,
+player,season,gameCount:n,hasEnough,canAvg,canCons,canStretch,canLast5,canMomentum,
+avg,high:Math.max(...sc),low:Math.min(...sc),
+stdDev:canCons?sd(sc):null,
+last5:last5Avg,momentum,
+stretch:canStretch?bestStretch(sc,pg):null,
 swing:biggestSwing(pg),
 bestDay:bestDay(pg),
 roll:rolling(sc,5),scores:sc,rawGames:pg,
-hc:"neutral", // assigned in getStats
+hc:"neutral",
 trend:hasEnough?trendDir(sc):"flat",
 };
 }
@@ -871,7 +877,7 @@ return<div key={s.player} onClick={()=>{setFP(s.player);setPage("players");}} st
 <StatusPill s={s.hc}/>
 </div>
 <div style={{color:C.muted,fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-{statLocked?`bowl ${(sortBy==="momentum"?MIN_GAMES:sortBy==="stretch"?5:sortBy==="cons"?2:5)-s.gameCount} more to rank here`:subtitle(s)}
+{statLocked?`bowl ${Math.max(1,(sortBy==="momentum"?MIN_GAMES:sortBy==="stretch"?5:sortBy==="cons"?2:5)-s.gameCount)} more to rank here`:subtitle(s)}
 </div>
 </div>
 <div style={{textAlign:"right",flexShrink:0}}>
@@ -946,7 +952,7 @@ return<button key={p} onClick={()=>setFP(p)} style={{background:active?C.accent:
 <h1 style={{...DS,fontSize:34,fontWeight:800,lineHeight:1,margin:"0 0 7px"}}>{ps.player}</h1>
 <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
 <StatusPill s={ps.hc}/>
-{ps.trend!=="flat"&&<Pill label={ps.trend==="up"?"↑ Rising":"↓ Falling"} color={ps.trend==="up"?C.green:C.red}/>}
+{ps.trend==="up"&&<Pill label="↑ Climbing" color={C.green}/>}
 <Pill label={`${ps.gameCount} games`} color={C.blue}/>
 </div>
 </div>
