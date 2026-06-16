@@ -642,10 +642,10 @@ function calcStats(gs,player,season){
 }
 function getStats(gs,season){
   const all=PLAYERS.map(p=>calcStats(gs,p,season)).filter(s=>s.gameCount>0);
-  // hot/cold: momentum >= +5 = hot, momentum <= -1 = cold
+  // hot/cold: momentum >= +5 = hot, momentum <= -5 = cold
   all.forEach(s=>{
     if(!s.hasEnough||s.momentum==null){s.hc="neutral";return;}
-    s.hc=s.momentum>=5?"hot":s.momentum<=-1?"cold":"neutral";
+    s.hc=s.momentum>=5?"hot":s.momentum<=-5?"cold":"neutral";
   });
   return all.sort((a,b)=>(b.avg||0)-(a.avg||0));
 }
