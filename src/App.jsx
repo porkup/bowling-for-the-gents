@@ -7,7 +7,7 @@ accent:"#E8C84A", accentDim:"#6B5C1F", red:"#E85A4A", green:"#3DD68C",
 blue:"#5B9CF6", muted:"#5A6278", textDim:"#8B93A8", text:"#EEF0F8",
 };
 const DS = {fontFamily:"'Barlow Condensed',sans-serif"};
-const MIN_GAMES = 5;
+const MIN_GAMES = 6;
 
 const PLAYERS = ["Logan","Aaron","Jared","Evan","Ethan","Danny","Aidan","Alon","Patchen","Elijah","Gabi","Benoit","Ari","Jaqueline","Gabe","Ben","Matan","Alex"];
 
@@ -573,10 +573,10 @@ Object.entries(by).forEach(([d,s])=>{const a=mean(s);if(!best||a>best.avg)best={
 return best;
 }
 function hotCold(scores,seasonAvg){
+// placeholder — actual hot/cold assigned after all players calculated
 if(scores.length<MIN_GAMES)return"neutral";
 const last5=mean(scores.slice(-5));
-const diff=last5-seasonAvg;
-return diff>7?"hot":diff<-7?"cold":"neutral";
+return last5-seasonAvg;
 }
 function trendDir(sc){
 const r=rolling(sc,5).filter(Boolean);if(r.length<3)return"flat";
@@ -602,17 +602,26 @@ stretch:hasEnough?bestStretch(sc):null,
 swing:biggestSwing(pg),
 bestDay:bestDay(pg),
 roll:rolling(sc,5),scores:sc,rawGames:pg,
-hc:hasEnough?hotCold(sc,avg):"neutral",
+hc:"neutral", // assigned in getStats
 trend:hasEnough?trendDir(sc):"flat",
 };
 }
 function getStats(gs,season){
-return PLAYERS.map(p=>calcStats(gs,p,season))
-.filter(s=>s.gameCount>0)
-.sort((a,b)=>(b.avg||0)-(a.avg||0));
+const all=PLAYERS.map(p=>calcStats(gs,p,season)).filter(s=>s.gameCount>0);
+// assign hot/cold: top 2 momentum = hot, bottom 2 = cold (among qualified)
+const qualified=all.filter(s=>s.hasEnough&&s.momentum!=null).sort((a,b)=>b.momentum-a.momentum);
+const hotSet=new Set(qualified.slice(0,2).map(s=>s.player));
+const coldSet=new Set(qualified.slice(-2).map(s=>s.player));
+// only mark hot/cold if there are enough qualified players to avoid overlap
+all.forEach(s=>{
+if(!s.hasEnough){s.hc="neutral";return;}
+if(qualified.length>=4){
+s.hc=hotSet.has(s.player)?"hot":coldSet.has(s.player)?"cold":"neutral";
+} else {
+s.hc="neutral";
 }
-function getAllPlayers(gs,season){
-return PLAYERS.map(p=>calcStats(gs,p,season));
+});
+return all.sort((a,b)=>(b.avg||0)-(a.avg||0));
 }
 function groupStats(gs,season){
 const g=gs.filter(x=>x.season===season);
@@ -685,7 +694,7 @@ const BOTTOM_TABS=[
 ];
 const MORE_PAGES=[
 {id:"sessions",l:"Sessions",icon:"📅"},
-{id:"records",l:"Records",icon:"⭐"},
+{id:"records",l:"All Time",icon:"⭐"},
 ];
 
 function Nav({page,setPage,season,setSeason}){
@@ -784,113 +793,84 @@ return<div>
 // ─── STANDINGS ─────────────────────────────────────────────────────────────────
 function StandingsPage({games,season,setPage,setFP}){
 const stats=useMemo(()=>getStats(games,season),[games,season]);
-const [subTab,setSubTab]=useState("standings");
 const [sortBy,setSortBy]=useState("avg");
 
 const sorted=useMemo(()=>[...stats].sort((a,b)=>{
 if(sortBy==="avg")return(b.avg||0)-(a.avg||0);
 if(sortBy==="high")return(b.high||0)-(a.high||0);
-if(sortBy==="last5")return(b.last5||0)-(a.last5||0);
-if(sortBy==="momentum")return(b.momentum||0)-(a.momentum||0);
+if(sortBy==="last5")return(b.last5||-999)-(a.last5||-999);
+if(sortBy==="momentum")return(b.momentum??-999)-(a.momentum??-999);
 if(sortBy==="stretch")return(b.stretch?.avg||0)-(a.stretch?.avg||0);
-if(sortBy==="cons")return(a.stdDev||99)-(b.stdDev||99);
+if(sortBy==="cons")return(a.stdDev??999)-(b.stdDev??999);
 if(sortBy==="games")return(b.gameCount||0)-(a.gameCount||0);
 return 0;
 }),[stats,sortBy]);
 
-// Who's Hot — sorted by momentum, anyone with >=5 games
-const hotList=useMemo(()=>stats.filter(s=>s.hasEnough&&s.momentum!=null).sort((a,b)=>(b.momentum||0)-(a.momentum||0)),[stats]);
-
-// All games sorted most recent first
-const allGames=useMemo(()=>[...games].filter(g=>g.season===season).sort((a,b)=>new Date(b.date)-new Date(a.date)||a.player.localeCompare(b.player)),[games,season]);
-
-const SORT_COLS=[{id:"avg",l:"Avg"},{id:"high",l:"High"},{id:"last5",l:"Last 5"},{id:"momentum",l:"Momentum"},{id:"stretch",l:"Stretch"},{id:"cons",l:"Consistency"},{id:"games",l:"Games"}];
+const SORT_COLS=[
+{id:"avg",l:"Avg"},
+{id:"high",l:"High"},
+{id:"last5",l:"Last 5"},
+{id:"momentum",l:"Momentum"},
+{id:"stretch",l:"Stretch"},
+{id:"cons",l:"Consistency"},
+{id:"games",l:"Games"},
+];
 
 function mainVal(s){
 if(sortBy==="avg")return s.avg!=null?s.avg.toFixed(1):"—";
 if(sortBy==="high")return s.high||"—";
 if(sortBy==="last5")return s.last5!=null?s.last5.toFixed(1):"—";
-if(sortBy==="momentum")return fdelta(s.momentum);
+if(sortBy==="momentum")return s.momentum!=null?fdelta(s.momentum):"—";
 if(sortBy==="stretch")return s.stretch?.avg!=null?s.stretch.avg.toFixed(1):"—";
-if(sortBy==="cons")return s.stdDev!=null?s.stdDev.toFixed(1):"—";
-if(sortBy==="games")return s.gameCount;
+if(sortBy==="cons")return s.stdDev!=null?`±${s.stdDev.toFixed(1)}`:"—";
+if(sortBy==="games")return s.gameCount||0;
 return"—";
 }
 function mainColor(s){
-if(sortBy==="momentum")return s.momentum>0?C.green:s.momentum<0?C.red:C.muted;
+if(sortBy==="momentum")return s.momentum==null?"—":s.momentum>0?C.green:s.momentum<0?C.red:C.muted;
 return C.accent;
 }
-function subText(s){
-const games=`${s.gameCount} game${s.gameCount!==1?"s":""}`;
-const last5=s.last5!=null?`last 5: ${s.last5.toFixed(1)}`:"last 5: —";
-const mom=s.momentum!=null?`${s.momentum!=null?fdelta(s.momentum):"—"} momentum`:"momentum: —";
-return`${games} · ${last5} · ${mom}`;
+function subtitle(s){
+if(sortBy==="avg")return`${s.gameCount} game${s.gameCount!==1?"s":""}`;
+if(sortBy==="high"){
+const g=s.rawGames?.find(g=>g.score===s.high);
+return g?fd(g.date):`${s.gameCount} games`;
+}
+if(sortBy==="last5")return s.avg!=null?`vs ${s.avg.toFixed(1)} season avg`:`${s.gameCount} games`;
+if(sortBy==="momentum")return s.last5!=null?`${s.last5.toFixed(1)} last 5 vs ${s.avg?.toFixed(1)} avg`:"needs 6+ games";
+if(sortBy==="stretch")return"best 5-game run";
+if(sortBy==="cons")return s.avg!=null?`avg ${s.avg.toFixed(1)}`:`${s.gameCount} games`;
+if(sortBy==="games")return s.avg!=null?`${s.avg.toFixed(1)} avg`:"no avg yet";
+return`${s.gameCount} games`;
 }
 
-const tabStyle=(id)=>({background:subTab===id?C.accent:C.card,border:`1px solid ${subTab===id?C.accent:C.border}`,color:subTab===id?C.bg:C.text,padding:"8px 18px",borderRadius:20,fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0});
-
 return<div style={{maxWidth:640,margin:"0 auto",padding:"14px 14px"}}>
-{/* Sub-tab switcher */}
-<div style={{display:"flex",gap:7,marginBottom:16,overflowX:"auto",paddingBottom:2}}>
-<button style={tabStyle("standings")} onClick={()=>setSubTab("standings")}>Standings</button>
-<button style={tabStyle("momentum")} onClick={()=>setSubTab("momentum")}>Who's Hot 🔥</button>
-<button style={tabStyle("games")} onClick={()=>setSubTab("games")}>Games</button>
+{/* Sort pills */}
+<div style={{display:"flex",gap:5,marginBottom:14,overflowX:"auto",paddingBottom:3}}>
+{SORT_COLS.map(col=><button key={col.id} onClick={()=>setSortBy(col.id)} style={{background:sortBy===col.id?C.accent:C.card,border:`1px solid ${sortBy===col.id?C.accent:C.border}`,color:sortBy===col.id?C.bg:C.text,padding:"7px 13px",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>{col.l}</button>)}
 </div>
 
-{/* ── STANDINGS ── */}
-{subTab==="standings"&&<>
-<div style={{display:"flex",gap:5,marginBottom:12,overflowX:"auto",paddingBottom:3}}>
-{SORT_COLS.map(c=><button key={c.id} onClick={()=>setSortBy(c.id)} style={{background:sortBy===c.id?C.surface:C.bg,border:`1px solid ${sortBy===c.id?C.accent:C.border}`,color:sortBy===c.id?C.accent:C.muted,padding:"5px 11px",borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>{c.l}</button>)}
-</div>
-{sorted.map((s,i)=><div key={s.player} onClick={()=>{setFP(s.player);setPage("players");}} style={{background:C.card,border:`1px solid ${s.hasEnough?C.border:C.border+"88"}`,borderRadius:11,padding:"12px 14px",marginBottom:6,display:"flex",alignItems:"center",gap:12,cursor:"pointer",opacity:s.hasEnough?1:0.75}}>
+{/* Player rows */}
+{sorted.map((s,i)=>{
+const isLocked=!s.hasEnough&&["momentum","stretch","cons"].includes(sortBy);
+return<div key={s.player} onClick={()=>{setFP(s.player);setPage("players");}} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:11,padding:"12px 14px",marginBottom:6,display:"flex",alignItems:"center",gap:12,cursor:"pointer",opacity:s.hasEnough?1:0.72}}>
 <span style={{...DS,fontSize:20,fontWeight:800,color:rankColor(i),width:26,flexShrink:0,textAlign:"center"}}>{i+1}</span>
 <div style={{flex:1,minWidth:0}}>
 <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
 <span style={{fontWeight:700,fontSize:14}}>{s.player}</span>
-{s.hasEnough?<StatusPill s={s.hc}/>:<span style={{fontSize:10,color:C.muted}}>🔒 {MIN_GAMES-s.gameCount} to unlock</span>}
+{s.hasEnough?<StatusPill s={s.hc}/>:<span style={{fontSize:10,color:C.muted}}>🔒 {MIN_GAMES-s.gameCount} to go</span>}
 </div>
-<div style={{color:C.muted,fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{subText(s)}</div>
+<div style={{color:C.muted,fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+{isLocked?"needs 6+ games to rank here":subtitle(s)}
 </div>
-<div style={{textAlign:"right",flexShrink:0}}>
-<div style={{...DS,fontSize:22,fontWeight:800,color:mainColor(s)}}>{mainVal(s)}</div>
-</div>
-</div>)}
-</>}
-
-{/* ── WHO'S HOT ── */}
-{subTab==="momentum"&&<>
-<div style={{fontSize:12,color:C.muted,marginBottom:12}}>Ranked by momentum — last 5 avg vs season avg. Needs {MIN_GAMES}+ games.</div>
-{hotList.map((s,i)=>{
-const col=s.momentum>0?C.green:s.momentum<0?C.red:C.muted;
-return<div key={s.player} onClick={()=>{setFP(s.player);setPage("players");}} style={{background:C.card,border:`1px solid ${C.border}`,borderLeft:`3px solid ${col}`,borderRadius:10,padding:"12px 14px",marginBottom:6,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
-<span style={{...DS,fontSize:18,fontWeight:800,color:col,width:24,flexShrink:0,textAlign:"center"}}>{i+1}</span>
-<div style={{flex:1,minWidth:0}}>
-<div style={{fontWeight:700,fontSize:14,marginBottom:3}}>{s.player}</div>
-<div style={{fontSize:11,color:C.muted}}>avg: {s.avg?.toFixed(1)} · last 5: {s.last5?.toFixed(1)}</div>
 </div>
 <div style={{textAlign:"right",flexShrink:0}}>
-<div style={{...DS,fontSize:22,fontWeight:800,color:col}}>{fdelta(s.momentum)}</div>
-<div style={{fontSize:10,color:C.muted}}>vs avg</div>
+<div style={{...DS,fontSize:22,fontWeight:800,color:isLocked?C.muted:mainColor(s)}}>
+{isLocked?"—":mainVal(s)}
+</div>
 </div>
 </div>;
 })}
-{hotList.length===0&&<div style={{color:C.muted,textAlign:"center",padding:32,fontSize:13}}>No players with {MIN_GAMES}+ games yet.</div>}
-</>}
-
-{/* ── GAMES ── */}
-{subTab==="games"&&<>
-<div style={{fontSize:12,color:C.muted,marginBottom:12}}>{allGames.length} games · most recent first</div>
-{allGames.map((g,i)=>{
-const scoreColor=g.score>=150?C.accent:g.score>=120?C.green:g.score<=80?C.red:C.text;
-return<div key={g.id} onClick={()=>{setFP(g.player);setPage("players");}} style={{background:i%2===0?C.card:C.surface,borderRadius:i===0?"10px 10px 0 0":i===allGames.length-1?"0 0 10px 10px":0,padding:"11px 14px",display:"flex",alignItems:"center",gap:12,cursor:"pointer",borderBottom:`1px solid ${C.border}`}}>
-<div style={{...DS,fontSize:22,fontWeight:800,color:scoreColor,width:44,flexShrink:0,textAlign:"right"}}>{g.score}</div>
-<div style={{flex:1,minWidth:0}}>
-<div style={{fontWeight:600,fontSize:14}}>{g.player}</div>
-<div style={{fontSize:11,color:C.muted}}>{fd(g.date)}</div>
-</div>
-</div>;
-})}
-</>}
 </div>;
 }
 
@@ -975,10 +955,10 @@ return<button key={p} onClick={()=>setFP(p)} style={{background:active?C.accent:
 </div>
 </div>
 {[
-{l:"Last 5 Avg",v:ps.last5?.toFixed(1),s:"most recent",gk:"last5"},
-{l:"High Game",v:ps.high,s:"",gk:"high"},
-{l:"Low Game",v:ps.low,s:"",gk:"low"},
-{l:"Consistency",v:ps.stdDev?.toFixed(1),s:"std deviation",gk:"stdDev"},
+{l:"Last 5 Avg",v:ps.last5?.toFixed(1),s:ps.avg!=null?`vs ${ps.avg.toFixed(1)} season avg`:null,gk:"last5"},
+{l:"High Game",v:ps.high,s:ps.rawGames?fd(ps.rawGames.find(g=>g.score===ps.high)?.date):null,gk:"high"},
+{l:"Low Game",v:ps.low,s:ps.rawGames?fd(ps.rawGames.find(g=>g.score===ps.low)?.date):null,gk:"low"},
+{l:"Consistency",v:ps.stdDev!=null?`±${ps.stdDev.toFixed(1)}`:null,s:ps.avg!=null?`avg ${ps.avg.toFixed(1)}`:null,gk:"stdDev"},
 {l:"Best Stretch",v:ps.stretch?.avg?.toFixed(1),s:"5-game avg",gk:"stretch"},
 {l:"Games",v:ps.gameCount,s:season==="S2"?"Season 2":"Season 1",gk:"gameCount"},
 ].map(k=><div key={k.l} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"11px 12px"}}>
@@ -1110,7 +1090,7 @@ rows.forEach((r,i)=>{if(!seen.has(r.date)){seen.add(r.date);idx[r.date]=Object.k
 return idx;
 },[rows]);
 
-const CW=44; // narrower columns for mobile
+const CW=56; // wide enough for 5-letter names
 
 return<div style={{padding:"10px 0"}}>
 {/* Header row — no season selector, follows global */}
@@ -1134,13 +1114,13 @@ style={{background:C.accent,border:"none",color:C.bg,padding:"8px 16px",borderRa
 <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
 <table style={{borderCollapse:"collapse",tableLayout:"fixed"}}>
 <colgroup>
-<col style={{width:80}}/>
+<col style={{width:84}}/>
 {orderedPlayers.map(p=><col key={p} style={{width:CW}}/>)}
 </colgroup>
 <thead>
 <tr style={{background:C.surface}}>
 <th style={{padding:"7px 8px",fontSize:9,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.04em",borderBottom:`1px solid ${C.border}`,textAlign:"left",position:"sticky",left:0,zIndex:3,background:C.surface,whiteSpace:"nowrap"}}>Date</th>
-{orderedPlayers.map(p=><th key={p} style={{padding:"7px 2px",fontSize:9,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.03em",borderBottom:`1px solid ${C.border}`,textAlign:"center",overflow:"hidden",whiteSpace:"nowrap",maxWidth:CW}} title={p}>{p.slice(0,4)}</th>)}
+{orderedPlayers.map(p=><th key={p} style={{padding:"7px 2px",fontSize:9,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.03em",borderBottom:`1px solid ${C.border}`,textAlign:"center",overflow:"hidden",whiteSpace:"nowrap",maxWidth:CW}} title={p}>{p.slice(0,5)}</th>)}
 </tr>
 </thead>
 <tbody>
@@ -1149,7 +1129,7 @@ const isFirst=row.rowIndex===0;
 const dateIdx=dateGroups[row.date]??0;
 const rowBg=dateIdx%2===0?C.card:C.surface;
 return<tr key={`${row.date}_${row.rowIndex}`} style={{background:rowBg}}>
-<td style={{padding:"1px 8px",position:"sticky",left:0,zIndex:1,background:rowBg,minWidth:80,maxWidth:80,borderRight:`1px solid ${C.border}44`}}>
+<td style={{padding:"1px 8px",position:"sticky",left:0,zIndex:1,background:rowBg,minWidth:84,maxWidth:84,borderRight:`1px solid ${C.border}44`}}>
 {isFirst&&<span style={{...DS,fontSize:11,fontWeight:700,color:C.text,whiteSpace:"nowrap"}}>{fd(row.date)}</span>}
 </td>
 {orderedPlayers.map(p=>{
@@ -1225,35 +1205,89 @@ return<div style={{maxWidth:640,margin:"0 auto",padding:"14px 14px"}}>
 }
 
 // ─── RECORDS ───────────────────────────────────────────────────────────────────
+function longestHotStreak(rawGames,seasonAvg){
+// consecutive games above season avg
+if(!rawGames||rawGames.length<2)return 0;
+let best=0,cur=0;
+rawGames.forEach(g=>{
+if(g.score>seasonAvg){cur++;best=Math.max(best,cur);}
+else cur=0;
+});
+return best;
+}
+
 function RecordsPage({games,season}){
-const stats=useMemo(()=>getStats(games,season).filter(s=>s.hasEnough),[games,season]);
-const allForHigh=useMemo(()=>getStats(games,season),[games,season]);
+// All Time Records spans both seasons
+const allGames=games; // all seasons
+const allStats=useMemo(()=>PLAYERS.map(p=>{
+const pg=allGames.filter(g=>g.player===p).sort((a,b)=>new Date(a.date)-new Date(b.date));
+if(!pg.length)return null;
+const sc=pg.map(g=>g.score);
+const avg=mean(sc);
+// session swing
+const by={};pg.forEach(g=>{if(!by[g.date])by[g.date]=[];by[g.date].push(g.score);});
+let maxSwing=0,swingDate=null;
+Object.entries(by).forEach(([d,s])=>{if(s.length<2)return;const sw=Math.max(...s)-Math.min(...s);if(sw>maxSwing){maxSwing=sw;swingDate=d;}});
+// best night
+let bestNightAvg=0,bestNightDate=null;
+Object.entries(by).forEach(([d,s])=>{const a=mean(s);if(a>bestNightAvg){bestNightAvg=a;bestNightDate=d;}});
+// worst night
+let worstNightAvg=999,worstNightDate=null;
+Object.entries(by).forEach(([d,s])=>{const a=mean(s);if(a<worstNightAvg){worstNightAvg=a;worstNightDate=d;}});
+// hot streak
+const streak=longestHotStreak(pg,avg);
+// best/worst 5-stretch
+let bestStretchAvg=0,worstStretchAvg=999;
+if(sc.length>=5){for(let i=4;i<sc.length;i++){const a=mean(sc.slice(i-4,i+1));if(a>bestStretchAvg)bestStretchAvg=a;if(a<worstStretchAvg)worstStretchAvg=a;}}
+return{player:p,gameCount:sc.length,avg,high:Math.max(...sc),low:Math.min(...sc),stdDev:sd(sc),
+maxSwing,swingDate,bestNightAvg,bestNightDate,worstNightAvg,worstNightDate,
+streak,bestStretchAvg:sc.length>=5?bestStretchAvg:null,worstStretchAvg:sc.length>=5?worstStretchAvg:null,
+rawGames:pg,scores:sc};
+}).filter(Boolean),[allGames]);
+
+const withGames=allStats.filter(s=>s.gameCount>0);
+const qualified=allStats.filter(s=>s.gameCount>=MIN_GAMES);
+
+function topRows(arr,key,asc=false,n=5){
+return [...arr].filter(s=>s[key]!=null).sort((a,b)=>asc?(a[key]||0)-(b[key]||0):(b[key]||0)-(a[key]||0)).slice(0,n)
+.map((s,i)=>({p:s.player,v:s[key],sub:s,i}));
+}
+
 const cats=[
-{t:"Highest Single Game",icon:"🎳",rows:[...allForHigh].filter(s=>s.gameCount>0).sort((a,b)=>b.high-a.high).slice(0,5).map(s=>({p:s.player,v:s.high,sub:fd(s.rawGames?.find(g=>g.score===s.high)?.date)||""}))},
-{t:"Season Average",icon:"📊",rows:stats.slice(0,5).map(s=>({p:s.player,v:s.avg?.toFixed(1),sub:`${s.gameCount} games`}))},
-{t:"Hottest Right Now",icon:"🔥",rows:[...stats].filter(x=>x.last5!=null).sort((a,b)=>(b.momentum||0)-(a.momentum||0)).slice(0,5).map(s=>({p:s.player,v:fdelta(s.momentum),sub:`last 5: ${s.last5?.toFixed(1)}`}))},
-{t:"Best 5-Game Stretch",icon:"⭐",rows:[...stats].sort((a,b)=>(b.stretch?.avg||0)-(a.stretch?.avg||0)).slice(0,5).map(s=>({p:s.player,v:s.stretch?.avg?.toFixed(1)||"—",sub:"avg over best 5"}))},
-{t:"Most Consistent",icon:"🎯",rows:[...stats].sort((a,b)=>a.stdDev-b.stdDev).slice(0,5).map(s=>({p:s.player,v:s.stdDev?.toFixed(1),sub:"std dev (lower = better)"}))},
-{t:"Biggest Single-Night Swing",icon:"⚡",rows:[...allForHigh].filter(x=>x.swing).sort((a,b)=>b.swing.swing-a.swing.swing).slice(0,5).map(s=>({p:s.player,v:`${s.swing.swing}p`,sub:fd(s.swing.date)}))},
-{t:"Best Night Average",icon:"🌙",rows:[...stats].filter(x=>x.bestDay).sort((a,b)=>b.bestDay.avg-a.bestDay.avg).slice(0,5).map(s=>({p:s.player,v:s.bestDay.avg?.toFixed(1),sub:fd(s.bestDay.date)}))},
-{t:"Most Games Bowled",icon:"📅",rows:[...allForHigh].filter(s=>s.gameCount>0).sort((a,b)=>b.gameCount-a.gameCount).slice(0,5).map(s=>({p:s.player,v:s.gameCount,sub:s.hasEnough?"":"below threshold"}))},
+{t:"Highest Single Game",icon:"🎳",positive:true,rows:topRows(withGames,"high").map(r=>({p:r.p,v:r.v,sub:fd(r.sub.rawGames.find(g=>g.score===r.sub.high)?.date)||""}))},
+{t:"Lowest Single Game",icon:"😬",positive:false,rows:topRows(withGames,"low",true).map(r=>({p:r.p,v:r.v,sub:fd(r.sub.rawGames.find(g=>g.score===r.sub.low)?.date)||""}))},
+{t:"Overall Average",icon:"📊",positive:true,rows:qualified.sort((a,b)=>b.avg-a.avg).slice(0,5).map(s=>({p:s.player,v:s.avg.toFixed(1),sub:`${s.gameCount} total games`}))},
+{t:"Lowest Average",icon:"📉",positive:false,rows:qualified.sort((a,b)=>a.avg-b.avg).slice(0,5).map(s=>({p:s.player,v:s.avg.toFixed(1),sub:`${s.gameCount} total games`}))},
+{t:"Best Night Average",icon:"🌙",positive:true,rows:qualified.sort((a,b)=>b.bestNightAvg-a.bestNightAvg).slice(0,5).map(s=>({p:s.player,v:s.bestNightAvg.toFixed(1),sub:fd(s.bestNightDate)}))},
+{t:"Worst Night Average",icon:"💀",positive:false,rows:qualified.sort((a,b)=>a.worstNightAvg-b.worstNightAvg).slice(0,5).map(s=>({p:s.player,v:s.worstNightAvg.toFixed(1),sub:fd(s.worstNightDate)}))},
+{t:"Best 5-Game Stretch",icon:"🔥",positive:true,rows:qualified.filter(s=>s.bestStretchAvg).sort((a,b)=>b.bestStretchAvg-a.bestStretchAvg).slice(0,5).map(s=>({p:s.player,v:s.bestStretchAvg.toFixed(1),sub:"avg over best 5 consecutive"}))},
+{t:"Worst 5-Game Stretch",icon:"❄️",positive:false,rows:qualified.filter(s=>s.worstStretchAvg).sort((a,b)=>a.worstStretchAvg-b.worstStretchAvg).slice(0,5).map(s=>({p:s.player,v:s.worstStretchAvg.toFixed(1),sub:"avg over worst 5 consecutive"}))},
+{t:"Most Consistent",icon:"🎯",positive:true,rows:qualified.sort((a,b)=>a.stdDev-b.stdDev).slice(0,5).map(s=>({p:s.player,v:`±${s.stdDev.toFixed(1)}`,sub:`avg ${s.avg.toFixed(1)}`}))},
+{t:"Most Inconsistent",icon:"🎲",positive:false,rows:qualified.sort((a,b)=>b.stdDev-a.stdDev).slice(0,5).map(s=>({p:s.player,v:`±${s.stdDev.toFixed(1)}`,sub:`avg ${s.avg.toFixed(1)}`}))},
+{t:"Biggest Single-Night Swing",icon:"⚡",positive:null,rows:withGames.filter(s=>s.maxSwing>0).sort((a,b)=>b.maxSwing-a.maxSwing).slice(0,5).map(s=>({p:s.player,v:`${s.maxSwing}p`,sub:fd(s.swingDate)}))},
+{t:"Longest Hot Streak",icon:"🏃",positive:true,rows:qualified.sort((a,b)=>b.streak-a.streak).slice(0,5).map(s=>({p:s.player,v:`${s.streak}`,sub:`consecutive games above avg`}))},
+{t:"Most Games Bowled",icon:"📅",positive:null,rows:withGames.sort((a,b)=>b.gameCount-a.gameCount).slice(0,5).map(s=>({p:s.player,v:s.gameCount,sub:`${s.avg?.toFixed(1)} avg`}))},
 ];
+
 return<div style={{maxWidth:640,margin:"0 auto",padding:"14px 14px"}}>
-<div style={{...DS,fontSize:16,fontWeight:800,color:C.text,marginBottom:4}}>Record Book</div>
-<div style={{fontSize:12,color:C.muted,marginBottom:12}}>{season==="S2"?"Season 2":"Season 1"} achievements</div>
-{cats.map(cat=><div key={cat.t} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 15px",marginBottom:9}}>
+<div style={{...DS,fontSize:18,fontWeight:800,color:C.text,marginBottom:2}}>All Time Records</div>
+<div style={{fontSize:12,color:C.muted,marginBottom:14}}>Spanning both seasons · {allGames.length} total games</div>
+{cats.map(cat=>{
+const topColor=cat.positive===true?C.accent:cat.positive===false?C.red:C.accent;
+return<div key={cat.t} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 15px",marginBottom:9}}>
 <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:11}}>
 <span style={{fontSize:17}}>{cat.icon}</span>
-<span style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:".07em",color:C.accent}}>{cat.t}</span>
+<span style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:".07em",color:topColor}}>{cat.t}</span>
 </div>
 {cat.rows.map((r,i)=><div key={r.p} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:i<cat.rows.length-1?`1px solid ${C.border}`:"none"}}>
 <div style={{display:"flex",alignItems:"center",gap:9}}>
-<span style={{...DS,fontSize:14,fontWeight:800,color:i===0?C.accent:C.muted,width:16,textAlign:"center"}}>{i+1}</span>
+<span style={{...DS,fontSize:14,fontWeight:800,color:i===0?topColor:C.muted,width:16,textAlign:"center"}}>{i+1}</span>
 <div><div style={{fontSize:13,fontWeight:i===0?700:400}}>{r.p}</div><div style={{fontSize:10,color:C.muted}}>{r.sub}</div></div>
 </div>
-<span style={{...DS,fontSize:20,fontWeight:800,color:i===0?C.accent:C.text}}>{r.v}</span>
+<span style={{...DS,fontSize:20,fontWeight:800,color:i===0?topColor:C.text}}>{r.v}</span>
 </div>)}
-</div>)}
+</div>;
+})}
 </div>;
 }
 
