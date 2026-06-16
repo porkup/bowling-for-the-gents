@@ -1077,41 +1077,43 @@ const filtered=useMemo(()=>
 games.filter(g=>g.season===season)
 ,[games,season]);
 
-// Build rows — most recent date first
-const rows=useMemo(()=>{
+// Build lookup and rows together so ordering is consistent
+// Within a date: sort by ts (timestamp) ascending = chronological order
+// Display: most recent date first, most recent game within date on top (reversed rowIndex)
+const {rows,lookup}=useMemo(()=>{
+// Group games by date, then by player, sorted by ts within player
 const byDate={};
 filtered.forEach(g=>{
-if(!byDate[g.date])byDate[g.date]={season:g.season,counts:{}};
-byDate[g.date].counts[g.player]=(byDate[g.date].counts[g.player]||0)+1;
+if(!byDate[g.date])byDate[g.date]={season:g.season,byPlayer:{}};
+const bp=byDate[g.date].byPlayer;
+if(!bp[g.player])bp[g.player]=[];
+bp[g.player].push(g);
 });
-const result=[];
-// add pending dates not yet in data
-pendingDates.filter(pd=>!byDate[pd.date]).forEach(pd=>{byDate[pd.date]={season:pd.season,counts:{}};});
-Object.entries(byDate).sort(([a],[b])=>new Date(b)-new Date(a)).forEach(([date,{season,counts}])=>{
-const maxRows=Object.values(counts).length>0?Math.max(...Object.values(counts),1):1;
-for(let r=0;r<maxRows;r++)result.push({date,rowIndex:r,season});
+// Sort each player's games by ts ascending (chronological)
+Object.values(byDate).forEach(({byPlayer})=>{
+Object.values(byPlayer).forEach(arr=>arr.sort((a,b)=>(a.ts??a.id)-(b.ts??b.id)));
 });
-return result;
+// Add pending dates
+pendingDates.filter(pd=>!byDate[pd.date]).forEach(pd=>{
+byDate[pd.date]={season:pd.season,byPlayer:{}};
+});
+// Build rows (most recent date first)
+const rowList=[];
+const map={};
+Object.entries(byDate).sort(([a],[b])=>new Date(b)-new Date(a)).forEach(([date,{season,byPlayer}])=>{
+const maxRows=Object.values(byPlayer).length>0?Math.max(...Object.values(byPlayer).map(a=>a.length),1):1;
+// For each row slot, assign games in reversed order (slot 0 = most recent)
+for(let r=0;r<maxRows;r++){
+rowList.push({date,rowIndex:r,season});
+// reversed: slot 0 = last game (highest chronological index)
+Object.entries(byPlayer).forEach(([player,games])=>{
+const reversed=[...games].reverse();
+if(reversed[r])map[`${date}_${r}_${player}`]=reversed[r];
+});
+}
+});
+return{rows:rowList,lookup:map};
 },[filtered,pendingDates]);
-
-const lookup=useMemo(()=>{
-// First pass: count total games per date+player
-const totals={};
-filtered.forEach(g=>{
-const k=`${g.date}_${g.player}`;
-totals[k]=(totals[k]||0)+1;
-});
-// Second pass: assign rowIndex so last game entered = index 0 (top of date block)
-const map={},counts={};
-filtered.forEach(g=>{
-const k=`${g.date}_${g.player}`;
-const insertIdx=counts[k]||0;
-counts[k]=insertIdx+1;
-const reversedIdx=(totals[k]-1)-insertIdx;
-map[`${g.date}_${reversedIdx}_${g.player}`]=g;
-});
-return map;
-},[filtered]);
 
 function flash(){setSaved(true);setTimeout(()=>setSaved(false),1200);}
 
@@ -1353,13 +1355,16 @@ return<div style={{maxWidth:700,margin:"0 auto",padding:"14px 14px"}}>
 const API = "https://script.google.com/macros/s/AKfycbwcPq8E6FQL0cNh4uQZPWacKpvLY9WjLOg0L56t4yuRvvC0qhR4hihT9TvnEcWlARGECg/exec";
 
 async function apiGet(action){
-const res = await fetch(`${API}?action=${action}`);
+const res = await fetch(`${API}?action=${action}`, {
+redirect:"follow",
+});
 return res.json();
 }
 
 async function apiPost(data){
 const res = await fetch(API, {
 method:"POST",
+redirect:"follow",
 body:JSON.stringify(data),
 });
 return res.json();
@@ -1390,7 +1395,7 @@ const normalized=scoreData.games.map((g,i)=>{
 const dateStr=g.date instanceof Date
 ?g.date.toISOString().split("T")[0]
 :String(g.date).trim();
-return{id:i+1,date:dateStr,player:String(g.player).trim(),score:Number(g.score),season:String(g.season).trim()};
+return{id:i+1,date:dateStr,player:String(g.player).trim(),score:Number(g.score),season:String(g.season).trim(),ts:g.ts||i};
 }).filter(g=>g.player&&g.score>0&&g.date);
 setGamesState(normalized);
 nextIdRef.current=normalized.length+1;
