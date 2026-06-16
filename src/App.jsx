@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 
 const C = {
@@ -925,7 +925,7 @@ return<div key={s.player} onClick={()=>{setFP(s.player);setPage("players");}} st
 }
 
 // ─── PLAYERS ───────────────────────────────────────────────────────────────────
-function PlayersPage({games,season,focusPlayer,setFP}){
+function PlayersPage({games,players,season,focusPlayer,setFP}){
 const stats=useMemo(()=>getStats(games,season),[games,season]);
 const sel=focusPlayer||PLAYERS[0];
 const ps=useMemo(()=>calcStats(games,sel,season),[games,sel,season]);
@@ -935,7 +935,7 @@ return<div style={{maxWidth:640,margin:"0 auto"}}>
 {/* Horizontal player selector */}
 <div style={{overflowX:"auto",padding:"10px 14px 8px",borderBottom:`1px solid ${C.border}`}}>
 <div style={{display:"flex",gap:6,width:"max-content"}}>
-{PLAYERS.map(p=>{
+{players.map(p=>{
 const ps2=stats.find(x=>x.player===p);
 const active=sel===p;
 return<button key={p} onClick={()=>setFP(p)} style={{background:active?C.accent:"none",border:`1px solid ${active?C.accent:C.border}`,borderRadius:20,padding:"7px 13px",color:active?C.bg:C.text,fontSize:12,fontWeight:active?700:400,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
@@ -1061,11 +1061,10 @@ return<button key={p} onClick={()=>setFP(p)} style={{background:active?C.accent:
 }
 
 // ─── SCORE SHEET ───────────────────────────────────────────────────────────────
-function ScoresPage({games,setGames,season,nextId,setNextId}){
+function ScoresPage({games,season,addGame,updateGame,deleteGame}){
 const [newDate,setNewDate]=useState(()=>new Date().toISOString().split("T")[0]);
 const [saved,setSaved]=useState(false);
 const [pendingDates,setPendingDates]=useState([]);
-const idRef=useRef(nextId);
 
 // Sort players left-to-right by most games played in current season
 const orderedPlayers=useMemo(()=>{
@@ -1096,12 +1095,20 @@ return result;
 },[filtered,pendingDates]);
 
 const lookup=useMemo(()=>{
+// First pass: count total games per date+player
+const totals={};
+filtered.forEach(g=>{
+const k=`${g.date}_${g.player}`;
+totals[k]=(totals[k]||0)+1;
+});
+// Second pass: assign rowIndex so last game entered = index 0 (top of date block)
 const map={},counts={};
 filtered.forEach(g=>{
 const k=`${g.date}_${g.player}`;
-const idx=counts[k]||0;
-counts[k]=idx+1;
-map[`${g.date}_${idx}_${g.player}`]=g;
+const insertIdx=counts[k]||0;
+counts[k]=insertIdx+1;
+const reversedIdx=(totals[k]-1)-insertIdx;
+map[`${g.date}_${reversedIdx}_${g.player}`]=g;
 });
 return map;
 },[filtered]);
@@ -1113,17 +1120,15 @@ const key=`${date}_${rowIndex}_${player}`;
 const existing=lookup[key];
 const trimmed=val.trim();
 if(trimmed===""){
-if(existing){setGames(prev=>prev.filter(g=>g.id!==existing.id));flash();}
+if(existing){deleteGame(existing.id);flash();}
 return;
 }
 const score=parseInt(trimmed,10);
 if(isNaN(score)||score<0||score>300)return;
 if(existing){
-setGames(prev=>prev.map(g=>g.id===existing.id?{...g,score}:g));
+updateGame(existing.id,{date,player,score,season:rowSeason});
 } else {
-const id=idRef.current++;
-setNextId(idRef.current);
-setGames(prev=>[...prev,{id,date,player,score,season:rowSeason}]);
+addGame({date,player,score,season:rowSeason});
 }
 flash();
 }
@@ -1344,16 +1349,96 @@ return<div style={{maxWidth:700,margin:"0 auto",padding:"14px 14px"}}>
 </div>;
 }
 
+// ─── API ────────────────────────────────────────────────────────────────────────
+const API = "https://script.google.com/macros/s/AKfycbwcPq8E6FQL0cNh4uQZPWacKpvLY9WjLOg0L56t4yuRvvC0qhR4hihT9TvnEcWlARGECg/exec";
+
+async function apiGet(action){
+const res = await fetch(`${API}?action=${action}`);
+return res.json();
+}
+
+async function apiPost(data){
+const res = await fetch(API, {
+method:"POST",
+body:JSON.stringify(data),
+});
+return res.json();
+}
+
 // ─── ROOT ───────────────────────────────────────────────────────────────────────
 export default function App(){
-const [games,setGames]=useState(INIT_GAMES);
+const [games,setGamesState]=useState(INIT_GAMES);
+const [players,setPlayersState]=useState(PLAYERS);
 const [page,setPage]=useState("home");
 const [season,setSeason]=useState("S2");
 const [focusPlayer,setFP]=useState(null);
-const [nextId,setNextId]=useState(509);
+const [loading,setLoading]=useState(true);
+const [syncErr,setSyncErr]=useState(false);
+const nextIdRef=useRef(10000);
 
-return<>
-<style>{`
+// Load from Google Sheets on mount
+useEffect(()=>{
+async function load(){
+try{
+const [scoreData,playerData]=await Promise.all([
+apiGet("getScores"),
+apiGet("getPlayers"),
+]);
+if(scoreData.games&&scoreData.games.length>0){
+// Normalize dates and scores
+const normalized=scoreData.games.map((g,i)=>{
+const dateStr=g.date instanceof Date
+?g.date.toISOString().split("T")[0]
+:String(g.date).trim();
+return{id:i+1,date:dateStr,player:String(g.player).trim(),score:Number(g.score),season:String(g.season).trim()};
+}).filter(g=>g.player&&g.score>0&&g.date);
+setGamesState(normalized);
+nextIdRef.current=normalized.length+1;
+}
+if(playerData.players&&playerData.players.length>0){
+setPlayersState(playerData.players);
+}
+} catch(e){
+setSyncErr(true);
+// Fall back to hardcoded data silently
+} finally{
+setLoading(false);
+}
+}
+load();
+},[]);
+
+// API-aware game mutations
+function addGame(game){
+const id=nextIdRef.current++;
+const newGame={...game,id};
+setGamesState(prev=>[...prev,newGame]);
+apiPost({action:"addGame",...game}).catch(()=>setSyncErr(true));
+return id;
+}
+
+function updateGame(id,updatedGame){
+setGamesState(prev=>prev.map(g=>{
+if(g.id!==id)return g;
+apiPost({action:"updateGame",date:updatedGame.date,player:updatedGame.player,score:updatedGame.score,season:updatedGame.season,oldScore:g.score}).catch(()=>setSyncErr(true));
+return{...g,...updatedGame};
+}));
+}
+
+function deleteGame(id){
+setGamesState(prev=>{
+const game=prev.find(g=>g.id===id);
+if(game)apiPost({action:"deleteGame",date:game.date,player:game.player,score:game.score,season:game.season}).catch(()=>setSyncErr(true));
+return prev.filter(g=>g.id!==id);
+});
+}
+
+function addPlayer(name){
+setPlayersState(prev=>[...prev,name]);
+apiPost({action:"addPlayer",player:name}).catch(()=>setSyncErr(true));
+}
+
+const STYLES=`
 @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800&family=Inter:wght@400;500;600&display=swap');
 *{box-sizing:border-box;margin:0;padding:0;}
 body{background:#0B0D12;color:#EEF0F8;font-family:'Inter',sans-serif;}
@@ -1361,13 +1446,30 @@ body{background:#0B0D12;color:#EEF0F8;font-family:'Inter',sans-serif;}
 button,input,select,textarea{font-family:inherit;}
 button{-webkit-tap-highlight-color:transparent;}
 input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{opacity:0;}
-`}</style>
+`;
+
+if(loading)return<>
+<style>{STYLES}</style>
+<div style={{minHeight:"100vh",background:"#0B0D12",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}>
+<div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:32,fontWeight:800,color:"#E8C84A"}}>🎳 Bowling for the Gënts</div>
+<div style={{color:"#5A6278",fontSize:13}}>Loading scores...</div>
+<div style={{width:40,height:40,border:"3px solid #252A38",borderTopColor:"#E8C84A",borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
+<style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+</div>
+</>;
+
+return<>
+<style>{STYLES}</style>
 <div style={{minHeight:"100vh",background:"#0B0D12",paddingBottom:68}}>
 <Nav page={page} setPage={setPage} season={season} setSeason={setSeason}/>
+{syncErr&&<div style={{background:"#E85A4A22",borderBottom:"1px solid #E85A4A",padding:"8px 14px",fontSize:12,color:"#E85A4A",textAlign:"center"}}>
+⚠️ Sync issue — changes may not be saving. Check your connection.
+<button onClick={()=>setSyncErr(false)} style={{background:"none",border:"none",color:"#E85A4A",marginLeft:8,cursor:"pointer",fontSize:12}}>✕</button>
+</div>}
 {page==="home"&&<HomePage games={games} season={season} setPage={setPage} setFP={setFP}/>}
 {page==="standings"&&<StandingsPage games={games} season={season} setPage={setPage} setFP={setFP}/>}
-{page==="players"&&<PlayersPage games={games} season={season} focusPlayer={focusPlayer} setFP={setFP}/>}
-{page==="scores"&&<ScoresPage games={games} setGames={setGames} season={season} nextId={nextId} setNextId={setNextId}/>}
+{page==="players"&&<PlayersPage games={games} players={players} season={season} focusPlayer={focusPlayer} setFP={setFP}/>}
+{page==="scores"&&<ScoresPage games={games} season={season} addGame={addGame} updateGame={updateGame} deleteGame={deleteGame}/>}
 {page==="sessions"&&<SessionsPage games={games} season={season}/>}
 {page==="records"&&<RecordsPage games={games}/>}
 </div>
