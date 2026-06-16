@@ -541,7 +541,7 @@ high: {label:"High Game", def:"Your best single game of the season. Just the one
 low: {label:"Low Game", def:"Your worst single game of the season. Everyone has them."},
 stdDev: {label:"Consistency", def:"How much your scores jump around. Lower = more predictable. Higher = more streaky. Neither is better — it's just your style."},
 last5: {label:"Last 5 Avg", def:"Your average over your 5 most recent games. The best quick read on how you're bowling right now."},
-recentForm: {label:"Recent Form", def:"Your last 5 average minus your season average. Positive means you're above your usual level lately. Negative means you're below it."},
+momentum: {label:"Momentum", def:"Your last 5 average minus your season average. Positive means you're bowling above your usual level lately. Negative means you're below it. Needs at least 5 games."},
 stretch: {label:"Best Stretch", def:"Your highest 5-game rolling average — basically your peak run of the season. Captures when you were in your best groove."},
 swing: {label:"Biggest Swing", def:"The largest gap between your best and worst game in a single night. Big number = wild night."},
 bestNight: {label:"Best Night", def:"Your highest single-session average — the night where, across all your games, you averaged the most."},
@@ -592,12 +592,12 @@ if(!pg.length)return{player,gameCount:0,season,hasEnough:false};
 const sc=pg.map(g=>g.score);
 const avg=mean(sc);
 const last5Avg=sc.length>=5?mean(sc.slice(-5)):null;
-const recentForm=last5Avg!=null?last5Avg-avg:null;
+const momentum=last5Avg!=null?last5Avg-avg:null;
 const hasEnough=sc.length>=MIN_GAMES;
 return{
 player,season,gameCount:sc.length,hasEnough,
 avg,high:Math.max(...sc),low:Math.min(...sc),stdDev:sd(sc),
-last5:last5Avg,recentForm,
+last5:last5Avg,momentum:momentum,
 stretch:hasEnough?bestStretch(sc):null,
 swing:biggestSwing(pg),
 bestDay:bestDay(pg),
@@ -607,11 +607,12 @@ trend:hasEnough?trendDir(sc):"flat",
 };
 }
 function getStats(gs,season){
-return PLAYERS.map(p=>calcStats(gs,p,season)).sort((a,b)=>{
-if(a.hasEnough&&!b.hasEnough)return -1;
-if(!a.hasEnough&&b.hasEnough)return 1;
-return (b.avg||0)-(a.avg||0);
-});
+return PLAYERS.map(p=>calcStats(gs,p,season))
+.filter(s=>s.gameCount>0)
+.sort((a,b)=>(b.avg||0)-(a.avg||0));
+}
+function getAllPlayers(gs,season){
+return PLAYERS.map(p=>calcStats(gs,p,season));
 }
 function groupStats(gs,season){
 const g=gs.filter(x=>x.season===season);
@@ -732,13 +733,13 @@ const grp=useMemo(()=>groupStats(games,season),[games,season]);
 const stats=useMemo(()=>getStats(games,season),[games,season]);
 const qualified=stats.filter(s=>s.hasEnough);
 const leader=qualified[0];
-const mostImp=useMemo(()=>[...qualified].filter(x=>x.recentForm!=null).sort((a,b)=>b.recentForm-a.recentForm)[0],[qualified]);
+const mostImp=useMemo(()=>[...qualified].filter(x=>x.momentum!=null).sort((a,b)=>b.momentum-a.momentum)[0],[qualified]);
 const devs=useMemo(()=>{
 const d=[];
 qualified.forEach(st=>{
 if(st.scores.slice(-3).includes(st.high)&&st.gameCount>5)d.push({icon:"🎳",text:`${st.player} set a personal best of ${st.high}`,bc:C.accent});
 if(st.hc==="hot")d.push({icon:"🔥",text:`${st.player} is on fire — last 5 avg ${st.last5?.toFixed(1)} vs ${st.avg?.toFixed(1)} season avg`,bc:C.red});
-if(st.recentForm>14)d.push({icon:"📈",text:`${st.player} is running ${st.recentForm.toFixed(1)} pins above their season average lately`,bc:C.green});
+if(st.momentum!=null&&st.momentum>14)d.push({icon:"📈",text:`${st.player} is running ${st.momentum.toFixed(1)} pins above their season average lately`,bc:C.green});
 if(st.swing?.swing>55)d.push({icon:"⚡",text:`${st.player} had a ${st.swing.swing}-pin single-night swing`,bc:C.blue});
 });
 return d.slice(0,5);
@@ -783,95 +784,113 @@ return<div>
 // ─── STANDINGS ─────────────────────────────────────────────────────────────────
 function StandingsPage({games,season,setPage,setFP}){
 const stats=useMemo(()=>getStats(games,season),[games,season]);
-const qualified=stats.filter(s=>s.hasEnough);
-const unqualified=stats.filter(s=>!s.hasEnough&&s.gameCount>0);
+const [subTab,setSubTab]=useState("standings");
 const [sortBy,setSortBy]=useState("avg");
 
-const sorted=useMemo(()=>[...qualified].sort((a,b)=>{
-if(sortBy==="avg")return b.avg-a.avg;
-if(sortBy==="high")return b.high-a.high;
+const sorted=useMemo(()=>[...stats].sort((a,b)=>{
+if(sortBy==="avg")return(b.avg||0)-(a.avg||0);
+if(sortBy==="high")return(b.high||0)-(a.high||0);
 if(sortBy==="last5")return(b.last5||0)-(a.last5||0);
-if(sortBy==="recentForm")return(b.recentForm||0)-(a.recentForm||0);
+if(sortBy==="momentum")return(b.momentum||0)-(a.momentum||0);
 if(sortBy==="stretch")return(b.stretch?.avg||0)-(a.stretch?.avg||0);
-if(sortBy==="cons")return a.stdDev-b.stdDev;
+if(sortBy==="cons")return(a.stdDev||99)-(b.stdDev||99);
+if(sortBy==="games")return(b.gameCount||0)-(a.gameCount||0);
 return 0;
-}),[qualified,sortBy]);
+}),[stats,sortBy]);
 
-// Who's Hot — ranked by recentForm descending
-const hotList=useMemo(()=>[...qualified].filter(s=>s.last5!=null).sort((a,b)=>(b.recentForm||0)-(a.recentForm||0)),[qualified]);
+// Who's Hot — sorted by momentum, anyone with >=5 games
+const hotList=useMemo(()=>stats.filter(s=>s.hasEnough&&s.momentum!=null).sort((a,b)=>(b.momentum||0)-(a.momentum||0)),[stats]);
 
-const COLS=[{id:"avg",l:"Avg"},{id:"high",l:"High"},{id:"last5",l:"Last 5"},{id:"recentForm",l:"Form"},{id:"stretch",l:"Stretch"},{id:"cons",l:"Consistency"}];
+// All games sorted most recent first
+const allGames=useMemo(()=>[...games].filter(g=>g.season===season).sort((a,b)=>new Date(b.date)-new Date(a.date)||a.player.localeCompare(b.player)),[games,season]);
 
-function statVal(s){
-if(sortBy==="avg")return s.avg?.toFixed(1);
-if(sortBy==="high")return s.high;
-if(sortBy==="last5")return s.last5?.toFixed(1);
-if(sortBy==="recentForm")return fdelta(s.recentForm);
-if(sortBy==="stretch")return s.stretch?.avg?.toFixed(1)||"—";
-if(sortBy==="cons")return s.stdDev?.toFixed(1);
+const SORT_COLS=[{id:"avg",l:"Avg"},{id:"high",l:"High"},{id:"last5",l:"Last 5"},{id:"momentum",l:"Momentum"},{id:"stretch",l:"Stretch"},{id:"cons",l:"Consistency"},{id:"games",l:"Games"}];
+
+function mainVal(s){
+if(sortBy==="avg")return s.avg!=null?s.avg.toFixed(1):"—";
+if(sortBy==="high")return s.high||"—";
+if(sortBy==="last5")return s.last5!=null?s.last5.toFixed(1):"—";
+if(sortBy==="momentum")return fdelta(s.momentum);
+if(sortBy==="stretch")return s.stretch?.avg!=null?s.stretch.avg.toFixed(1):"—";
+if(sortBy==="cons")return s.stdDev!=null?s.stdDev.toFixed(1):"—";
+if(sortBy==="games")return s.gameCount;
 return"—";
 }
-function statColor(s){
-if(sortBy==="recentForm")return s.recentForm>0?C.green:s.recentForm<0?C.red:C.text;
+function mainColor(s){
+if(sortBy==="momentum")return s.momentum>0?C.green:s.momentum<0?C.red:C.muted;
 return C.accent;
 }
-function statSub(s){
-if(sortBy==="avg")return`${s.gameCount} games`;
-if(sortBy==="last5")return`${fdelta(s.recentForm)} vs avg`;
-if(sortBy==="recentForm")return`last 5: ${s.last5?.toFixed(1)}`;
-if(sortBy==="stretch")return"best 5-game run";
-if(sortBy==="cons")return"std deviation";
-return`${s.gameCount} games`;
+function subText(s){
+const games=`${s.gameCount} game${s.gameCount!==1?"s":""}`;
+const last5=s.last5!=null?`last 5: ${s.last5.toFixed(1)}`:"last 5: —";
+const mom=s.momentum!=null?`${s.momentum!=null?fdelta(s.momentum):"—"} momentum`:"momentum: —";
+return`${games} · ${last5} · ${mom}`;
 }
 
+const tabStyle=(id)=>({background:subTab===id?C.accent:C.card,border:`1px solid ${subTab===id?C.accent:C.border}`,color:subTab===id?C.bg:C.text,padding:"8px 18px",borderRadius:20,fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0});
+
 return<div style={{maxWidth:640,margin:"0 auto",padding:"14px 14px"}}>
-{/* Sort pills */}
-<div style={{display:"flex",gap:5,marginBottom:14,overflowX:"auto",paddingBottom:3}}>
-{COLS.map(c=><button key={c.id} onClick={()=>setSortBy(c.id)} style={{background:sortBy===c.id?C.accent:C.card,border:`1px solid ${sortBy===c.id?C.accent:C.border}`,color:sortBy===c.id?C.bg:C.text,padding:"7px 13px",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>{c.l}</button>)}
+{/* Sub-tab switcher */}
+<div style={{display:"flex",gap:7,marginBottom:16,overflowX:"auto",paddingBottom:2}}>
+<button style={tabStyle("standings")} onClick={()=>setSubTab("standings")}>Standings</button>
+<button style={tabStyle("momentum")} onClick={()=>setSubTab("momentum")}>Who's Hot 🔥</button>
+<button style={tabStyle("games")} onClick={()=>setSubTab("games")}>Games</button>
 </div>
 
-{/* Main standings */}
-<div style={{...DS,fontSize:15,fontWeight:800,color:C.text,marginBottom:8}}>Season Standings</div>
-{sorted.map((s,i)=><div key={s.player} onClick={()=>{setFP(s.player);setPage("players");}} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:11,padding:"12px 14px",marginBottom:6,display:"flex",alignItems:"center",gap:12,cursor:"pointer"}}>
+{/* ── STANDINGS ── */}
+{subTab==="standings"&&<>
+<div style={{display:"flex",gap:5,marginBottom:12,overflowX:"auto",paddingBottom:3}}>
+{SORT_COLS.map(c=><button key={c.id} onClick={()=>setSortBy(c.id)} style={{background:sortBy===c.id?C.surface:C.bg,border:`1px solid ${sortBy===c.id?C.accent:C.border}`,color:sortBy===c.id?C.accent:C.muted,padding:"5px 11px",borderRadius:20,fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>{c.l}</button>)}
+</div>
+{sorted.map((s,i)=><div key={s.player} onClick={()=>{setFP(s.player);setPage("players");}} style={{background:C.card,border:`1px solid ${s.hasEnough?C.border:C.border+"88"}`,borderRadius:11,padding:"12px 14px",marginBottom:6,display:"flex",alignItems:"center",gap:12,cursor:"pointer",opacity:s.hasEnough?1:0.75}}>
 <span style={{...DS,fontSize:20,fontWeight:800,color:rankColor(i),width:26,flexShrink:0,textAlign:"center"}}>{i+1}</span>
 <div style={{flex:1,minWidth:0}}>
 <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
 <span style={{fontWeight:700,fontSize:14}}>{s.player}</span>
-<StatusPill s={s.hc}/>
+{s.hasEnough?<StatusPill s={s.hc}/>:<span style={{fontSize:10,color:C.muted}}>🔒 {MIN_GAMES-s.gameCount} to unlock</span>}
 </div>
-<div style={{color:C.muted,fontSize:11}}>{s.gameCount} games · last 5: {s.last5?.toFixed(1)} · {fdelta(s.recentForm)} form</div>
+<div style={{color:C.muted,fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{subText(s)}</div>
 </div>
 <div style={{textAlign:"right",flexShrink:0}}>
-<div style={{...DS,fontSize:22,fontWeight:800,color:statColor(s)}}>{statVal(s)}</div>
-<div style={{fontSize:10,color:C.muted}}>{statSub(s)}</div>
+<div style={{...DS,fontSize:22,fontWeight:800,color:mainColor(s)}}>{mainVal(s)}</div>
 </div>
 </div>)}
+</>}
 
-{/* Who's Hot */}
-{hotList.length>0&&<div style={{marginTop:20,marginBottom:16}}>
-<div style={{...DS,fontSize:15,fontWeight:800,color:C.text,marginBottom:8}}>Who's Hot 🔥</div>
-<div style={{fontSize:11,color:C.muted,marginBottom:10}}>Ranked by recent form — last 5 avg vs season avg</div>
+{/* ── WHO'S HOT ── */}
+{subTab==="momentum"&&<>
+<div style={{fontSize:12,color:C.muted,marginBottom:12}}>Ranked by momentum — last 5 avg vs season avg. Needs {MIN_GAMES}+ games.</div>
 {hotList.map((s,i)=>{
-const formColor=s.recentForm>0?C.green:s.recentForm<0?C.red:C.muted;
-return<div key={s.player} onClick={()=>{setFP(s.player);setPage("players");}} style={{background:C.card,border:`1px solid ${C.border}`,borderLeft:`3px solid ${formColor}`,borderRadius:10,padding:"11px 14px",marginBottom:5,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
-<span style={{...DS,fontSize:17,fontWeight:800,color:formColor,width:24,flexShrink:0,textAlign:"center"}}>{i+1}</span>
-<div style={{flex:1}}>
-<div style={{fontWeight:600,fontSize:14}}>{s.player}</div>
-<div style={{fontSize:11,color:C.muted}}>season avg: {s.avg?.toFixed(1)} · last 5: {s.last5?.toFixed(1)}</div>
+const col=s.momentum>0?C.green:s.momentum<0?C.red:C.muted;
+return<div key={s.player} onClick={()=>{setFP(s.player);setPage("players");}} style={{background:C.card,border:`1px solid ${C.border}`,borderLeft:`3px solid ${col}`,borderRadius:10,padding:"12px 14px",marginBottom:6,display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+<span style={{...DS,fontSize:18,fontWeight:800,color:col,width:24,flexShrink:0,textAlign:"center"}}>{i+1}</span>
+<div style={{flex:1,minWidth:0}}>
+<div style={{fontWeight:700,fontSize:14,marginBottom:3}}>{s.player}</div>
+<div style={{fontSize:11,color:C.muted}}>avg: {s.avg?.toFixed(1)} · last 5: {s.last5?.toFixed(1)}</div>
 </div>
-<div style={{textAlign:"right"}}>
-<div style={{...DS,fontSize:20,fontWeight:800,color:formColor}}>{fdelta(s.recentForm)}</div>
+<div style={{textAlign:"right",flexShrink:0}}>
+<div style={{...DS,fontSize:22,fontWeight:800,color:col}}>{fdelta(s.momentum)}</div>
 <div style={{fontSize:10,color:C.muted}}>vs avg</div>
 </div>
 </div>;
 })}
-</div>}
+{hotList.length===0&&<div style={{color:C.muted,textAlign:"center",padding:32,fontSize:13}}>No players with {MIN_GAMES}+ games yet.</div>}
+</>}
 
-{/* Unqualified */}
-{unqualified.length>0&&<div style={{marginTop:16}}>
-<div style={{fontSize:11,color:C.muted,marginBottom:8}}>Need {MIN_GAMES}+ games to unlock full insights</div>
-{unqualified.map(s=><LockedCard key={s.player} player={s.player} gameCount={s.gameCount}/>)}
-</div>}
+{/* ── GAMES ── */}
+{subTab==="games"&&<>
+<div style={{fontSize:12,color:C.muted,marginBottom:12}}>{allGames.length} games · most recent first</div>
+{allGames.map((g,i)=>{
+const scoreColor=g.score>=150?C.accent:g.score>=120?C.green:g.score<=80?C.red:C.text;
+return<div key={g.id} onClick={()=>{setFP(g.player);setPage("players");}} style={{background:i%2===0?C.card:C.surface,borderRadius:i===0?"10px 10px 0 0":i===allGames.length-1?"0 0 10px 10px":0,padding:"11px 14px",display:"flex",alignItems:"center",gap:12,cursor:"pointer",borderBottom:`1px solid ${C.border}`}}>
+<div style={{...DS,fontSize:22,fontWeight:800,color:scoreColor,width:44,flexShrink:0,textAlign:"right"}}>{g.score}</div>
+<div style={{flex:1,minWidth:0}}>
+<div style={{fontWeight:600,fontSize:14}}>{g.player}</div>
+<div style={{fontSize:11,color:C.muted}}>{fd(g.date)}</div>
+</div>
+</div>;
+})}
+</>}
 </div>;
 }
 
@@ -900,25 +919,34 @@ return<button key={p} onClick={()=>setFP(p)} style={{background:active?C.accent:
 {!ps||ps.gameCount===0
 ?<div style={{padding:40,textAlign:"center",color:C.muted}}>No games recorded for {sel} in {season==="S2"?"Season 2":"Season 1"}.</div>
 :!ps.hasEnough
-?<div style={{padding:"24px 14px",maxWidth:640,margin:"0 auto"}}>
-<h1 style={{...DS,fontSize:32,fontWeight:800,lineHeight:1,margin:"0 0 8px"}}>{ps.player}</h1>
-<div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"20px",textAlign:"center",marginTop:12}}>
-<div style={{fontSize:32,marginBottom:10}}>🔒</div>
-<div style={{...DS,fontSize:20,fontWeight:800,color:C.text,marginBottom:6}}>Almost there</div>
-<div style={{fontSize:13,color:C.muted,marginBottom:14}}>Bowl {MIN_GAMES-ps.gameCount} more game{MIN_GAMES-ps.gameCount!==1?"s":""} to unlock full insights</div>
-<div style={{display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
-<div style={{background:C.surface,borderRadius:9,padding:"10px 14px",textAlign:"center"}}>
-<div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:2}}>Games</div>
-<div style={{...DS,fontSize:22,fontWeight:800}}>{ps.gameCount}</div>
+?<div style={{padding:"14px 14px"}}>
+<div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+<div>
+<h1 style={{...DS,fontSize:34,fontWeight:800,lineHeight:1,margin:"0 0 7px"}}>{ps.player}</h1>
+<Pill label={`${ps.gameCount} games · ${MIN_GAMES-ps.gameCount} to unlock insights`} color={C.muted}/>
 </div>
-<div style={{background:C.surface,borderRadius:9,padding:"10px 14px",textAlign:"center"}}>
-<div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:2}}>Avg so far</div>
-<div style={{...DS,fontSize:22,fontWeight:800}}>{ps.avg?.toFixed(1)}</div>
 </div>
-<div style={{background:C.surface,borderRadius:9,padding:"10px 14px",textAlign:"center"}}>
-<div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:2}}>High</div>
-<div style={{...DS,fontSize:22,fontWeight:800}}>{ps.high}</div>
+<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+<div style={{background:C.surface,border:`1px solid ${C.accent}55`,borderRadius:10,padding:"11px 12px",gridColumn:"1/-1"}}>
+<div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:2,display:"flex",alignItems:"center",gap:3}}>Season Avg<InfoPop k="avg"/></div>
+<div style={{...DS,fontSize:36,fontWeight:800,color:C.accent,lineHeight:1}}>{ps.avg?.toFixed(1)}</div>
 </div>
+{[{l:"High Game",v:ps.high,gk:"high"},{l:"Low Game",v:ps.low,gk:"low"},{l:"Games",v:ps.gameCount,gk:"gameCount"}].map(k=><div key={k.l} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"11px 12px"}}>
+<div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:2,display:"flex",alignItems:"center",gap:3}}>{k.l}{k.gk&&<InfoPop k={k.gk}/>}</div>
+<div style={{...DS,fontSize:22,fontWeight:800,lineHeight:1}}>{k.v??<span style={{color:C.muted}}>—</span>}</div>
+</div>)}
+</div>
+<div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:11,padding:"14px 16px",textAlign:"center"}}>
+<div style={{fontSize:20,marginBottom:8}}>🔒</div>
+<div style={{fontSize:13,color:C.muted}}>Bowl {MIN_GAMES-ps.gameCount} more game{MIN_GAMES-ps.gameCount!==1?"s":""} to unlock momentum, consistency, trend, and hot/cold status</div>
+</div>
+<div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"13px",marginTop:10}}>
+<div style={{fontSize:9,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:".08em",marginBottom:10}}>Every Game</div>
+<div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+{ps.rawGames.map((g,i)=><div key={i} style={{background:g.score===ps.high?C.accent+"22":C.surface,border:`1px solid ${g.score===ps.high?C.accent:C.border}`,borderRadius:7,padding:"5px 8px",textAlign:"center",minWidth:42}}>
+<div style={{...DS,fontSize:16,fontWeight:800,color:g.score===ps.high?C.accent:C.text}}>{g.score}</div>
+<div style={{fontSize:8,color:C.muted}}>{fd(g.date)}</div>
+</div>)}
 </div>
 </div>
 </div>
@@ -941,8 +969,8 @@ return<button key={p} onClick={()=>setFP(p)} style={{background:active?C.accent:
 <div style={{...DS,fontSize:36,fontWeight:800,color:C.accent,lineHeight:1}}>{ps.avg?.toFixed(1)}</div>
 </div>
 <div style={{textAlign:"right"}}>
-<div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:2,display:"flex",alignItems:"center",justifyContent:"flex-end",gap:3}}>Recent Form<InfoPop k="recentForm"/></div>
-<div style={{...DS,fontSize:28,fontWeight:800,color:ps.recentForm>0?C.green:ps.recentForm<0?C.red:C.text,lineHeight:1}}>{fdelta(ps.recentForm)}</div>
+<div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:2,display:"flex",alignItems:"center",justifyContent:"flex-end",gap:3}}>Recent Form<InfoPop k="momentum"/></div>
+<div style={{...DS,fontSize:28,fontWeight:800,color:ps.momentum>0?C.green:ps.momentum<0?C.red:C.text,lineHeight:1}}>{fdelta(ps.momentum)}</div>
 <div style={{fontSize:10,color:C.muted}}>last 5 vs avg</div>
 </div>
 </div>
@@ -1004,36 +1032,41 @@ return<button key={p} onClick={()=>setFP(p)} style={{background:active?C.accent:
 
 // ─── SCORE SHEET ───────────────────────────────────────────────────────────────
 function ScoresPage({games,setGames,season,nextId,setNextId}){
-const [filterSeason,setFilterSeason]=useState(season||"S2");
-const [newDate,setNewDate]=useState("");
-const [newSeason,setNewSeason]=useState(season||"S2");
+const [newDate,setNewDate]=useState(()=>new Date().toISOString().split("T")[0]);
 const [saved,setSaved]=useState(false);
 const [pendingDates,setPendingDates]=useState([]);
 const idRef=useRef(nextId);
 
-const filtered=useMemo(()=>
-games.filter(g=>g.season===filterSeason).sort((a,b)=>new Date(a.date)-new Date(b.date))
-,[games,filterSeason]);
+// Sort players left-to-right by most games played in current season
+const orderedPlayers=useMemo(()=>{
+const counts={};
+games.filter(g=>g.season===season).forEach(g=>{counts[g.player]=(counts[g.player]||0)+1;});
+return [...PLAYERS].sort((a,b)=>(counts[b]||0)-(counts[a]||0));
+},[games,season]);
 
+const filtered=useMemo(()=>
+games.filter(g=>g.season===season)
+,[games,season]);
+
+// Build rows — most recent date first
 const rows=useMemo(()=>{
 const byDate={};
 filtered.forEach(g=>{
 if(!byDate[g.date])byDate[g.date]={season:g.season,counts:{}};
-const c=byDate[g.date].counts;
-c[g.player]=(c[g.player]||0)+1;
+byDate[g.date].counts[g.player]=(byDate[g.date].counts[g.player]||0)+1;
 });
 const result=[];
-Object.entries(byDate).sort(([a],[b])=>new Date(a)-new Date(b)).forEach(([date,{season,counts}])=>{
-const maxRows=Math.max(...Object.values(counts),1);
+// add pending dates not yet in data
+pendingDates.filter(pd=>!byDate[pd.date]).forEach(pd=>{byDate[pd.date]={season:pd.season,counts:{}};});
+Object.entries(byDate).sort(([a],[b])=>new Date(b)-new Date(a)).forEach(([date,{season,counts}])=>{
+const maxRows=Object.values(counts).length>0?Math.max(...Object.values(counts),1):1;
 for(let r=0;r<maxRows;r++)result.push({date,rowIndex:r,season});
 });
-pendingDates.filter(pd=>!byDate[pd.date]).forEach(pd=>result.push({date:pd.date,rowIndex:0,season:pd.season}));
-return result.sort((a,b)=>new Date(a.date)-new Date(b.date)||a.rowIndex-b.rowIndex);
+return result;
 },[filtered,pendingDates]);
 
 const lookup=useMemo(()=>{
-const map={};
-const counts={};
+const map={},counts={};
 filtered.forEach(g=>{
 const k=`${g.date}_${g.player}`;
 const idx=counts[k]||0;
@@ -1045,7 +1078,7 @@ return map;
 
 function flash(){setSaved(true);setTimeout(()=>setSaved(false),1200);}
 
-function handleBlur(date,rowIndex,player,season,val){
+function handleBlur(date,rowIndex,player,rowSeason,val){
 const key=`${date}_${rowIndex}_${player}`;
 const existing=lookup[key];
 const trimmed=val.trim();
@@ -1060,61 +1093,69 @@ setGames(prev=>prev.map(g=>g.id===existing.id?{...g,score}:g));
 } else {
 const id=idRef.current++;
 setNextId(idRef.current);
-setGames(prev=>[...prev,{id,date,player,score,season}]);
+setGames(prev=>[...prev,{id,date,player,score,season:rowSeason}]);
 }
 flash();
 }
 
 function addRow(){
 if(!newDate)return;
-setPendingDates(prev=>[...prev.filter(d=>d.date!==newDate),{date:newDate,season:newSeason}]);
-setNewDate("");
+// don't add duplicate
+setPendingDates(prev=>[...prev.filter(d=>d.date!==newDate),{date:newDate,season}]);
 }
 
-const dateFirstRow=useMemo(()=>{
-const seen=new Set(),first={};
-rows.forEach((r,i)=>{if(!seen.has(r.date)){seen.add(r.date);first[r.date]=i;}});
-return first;
+const dateGroups=useMemo(()=>{
+const seen=new Set(),idx={};
+rows.forEach((r,i)=>{if(!seen.has(r.date)){seen.add(r.date);idx[r.date]=Object.keys(idx).length;}});
+return idx;
 },[rows]);
 
-const CW=52;
+const CW=44; // narrower columns for mobile
 
-return<div style={{padding:"12px 0"}}>
-<div style={{display:"flex",gap:8,alignItems:"center",padding:"0 14px",marginBottom:10,flexWrap:"wrap"}}>
-<div style={{...DS,fontSize:16,fontWeight:800,color:C.text}}>Score Sheet</div>
-<div style={{display:"flex",gap:6,marginLeft:"auto",alignItems:"center"}}>
+return<div style={{padding:"10px 0"}}>
+{/* Header row — no season selector, follows global */}
+<div style={{display:"flex",gap:8,alignItems:"center",padding:"0 14px",marginBottom:6}}>
+<div style={{...DS,fontSize:16,fontWeight:800,color:C.text,flex:1}}>Score Sheet</div>
 {saved&&<span style={{fontSize:11,color:C.green,fontWeight:600}}>✓ Saved</span>}
-<select value={filterSeason} onChange={e=>setFilterSeason(e.target.value)} style={{background:C.card,border:`1px solid ${C.border}`,color:C.text,padding:"5px 8px",borderRadius:7,fontSize:11,outline:"none"}}>
-<option value="S2">Season 2</option><option value="S1">Season 1</option>
-</select>
 </div>
+<div style={{fontSize:11,color:C.muted,padding:"0 14px",marginBottom:8}}>Tap a cell · clear to delete · Tab or Enter to move</div>
+
+{/* Add row — pinned at top, minimal: just date + button */}
+<div style={{padding:"0 14px 10px",display:"flex",gap:8,alignItems:"center"}}>
+<input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)}
+style={{background:C.surface,border:`1px solid ${C.accent}`,borderRadius:8,color:C.text,padding:"8px 10px",fontSize:13,outline:"none",flex:1}}/>
+<button onClick={addRow}
+style={{background:C.accent,border:"none",color:C.bg,padding:"8px 16px",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
++ Add Row
+</button>
 </div>
-<div style={{fontSize:11,color:C.muted,padding:"0 14px",marginBottom:10}}>Tap any cell to edit · Clear to delete · Tab/Enter to move</div>
-<div style={{overflowX:"auto"}}>
-<table style={{borderCollapse:"collapse",tableLayout:"fixed",minWidth:"100%"}}>
+
+{/* Table — horizontal scroll with frozen date column */}
+<div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+<table style={{borderCollapse:"collapse",tableLayout:"fixed"}}>
 <colgroup>
-<col style={{width:82}}/>
-{PLAYERS.map(p=><col key={p} style={{width:CW}}/>)}
+<col style={{width:80}}/>
+{orderedPlayers.map(p=><col key={p} style={{width:CW}}/>)}
 </colgroup>
 <thead>
 <tr style={{background:C.surface}}>
-<th style={{padding:"7px 8px",fontSize:9,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.04em",borderBottom:`1px solid ${C.border}`,textAlign:"left",position:"sticky",left:0,zIndex:3,background:C.surface}}>Date</th>
-{PLAYERS.map(p=><th key={p} style={{padding:"7px 3px",fontSize:9,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.04em",borderBottom:`1px solid ${C.border}`,textAlign:"center",overflow:"hidden",whiteSpace:"nowrap"}} title={p}>{p.slice(0,5)}</th>)}
+<th style={{padding:"7px 8px",fontSize:9,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.04em",borderBottom:`1px solid ${C.border}`,textAlign:"left",position:"sticky",left:0,zIndex:3,background:C.surface,whiteSpace:"nowrap"}}>Date</th>
+{orderedPlayers.map(p=><th key={p} style={{padding:"7px 2px",fontSize:9,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.03em",borderBottom:`1px solid ${C.border}`,textAlign:"center",overflow:"hidden",whiteSpace:"nowrap",maxWidth:CW}} title={p}>{p.slice(0,4)}</th>)}
 </tr>
 </thead>
 <tbody>
 {rows.map((row,ri)=>{
 const isFirst=row.rowIndex===0;
-const dateIdx=Object.keys(dateFirstRow).indexOf(row.date);
+const dateIdx=dateGroups[row.date]??0;
 const rowBg=dateIdx%2===0?C.card:C.surface;
 return<tr key={`${row.date}_${row.rowIndex}`} style={{background:rowBg}}>
-<td style={{padding:"2px 8px",borderBottom:"none",position:"sticky",left:0,zIndex:1,background:rowBg,minWidth:82,maxWidth:82}}>
+<td style={{padding:"1px 8px",position:"sticky",left:0,zIndex:1,background:rowBg,minWidth:80,maxWidth:80,borderRight:`1px solid ${C.border}44`}}>
 {isFirst&&<span style={{...DS,fontSize:11,fontWeight:700,color:C.text,whiteSpace:"nowrap"}}>{fd(row.date)}</span>}
 </td>
-{PLAYERS.map(p=>{
+{orderedPlayers.map(p=>{
 const game=lookup[`${row.date}_${row.rowIndex}_${p}`];
-const col=game?(game.score>=150?C.accent:game.score>=120?C.green:game.score<=80?C.red:C.text):C.muted+"44";
-return<td key={p} style={{padding:"1px 1px",borderBottom:"none",textAlign:"center"}}>
+const col=game?(game.score>=150?C.accent:game.score>=120?C.green:game.score<=80?C.red:C.text):C.muted+"33";
+return<td key={p} style={{padding:"0",textAlign:"center",maxWidth:CW}}>
 <input
 type="number" min={0} max={300}
 defaultValue={game?.score??""}
@@ -1122,27 +1163,16 @@ key={`${game?.id??`${row.date}_${row.rowIndex}_${p}`}`}
 placeholder="·"
 onBlur={e=>handleBlur(row.date,row.rowIndex,p,row.season,e.target.value)}
 onKeyDown={e=>{if(e.key==="Enter"||e.key==="Tab")e.target.blur();}}
-style={{background:"transparent",border:"none",outline:"none",color:col,fontSize:13,fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif",textAlign:"center",width:"100%",padding:"5px 1px",cursor:"text"}}
+style={{background:"transparent",border:"none",outline:"none",color:col,fontSize:14,fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif",textAlign:"center",width:"100%",padding:"6px 1px",cursor:"text",minWidth:0}}
 />
 </td>;
 })}
 </tr>;
 })}
-<tr style={{background:C.bg}}>
-<td colSpan={1+PLAYERS.length} style={{padding:"10px 14px"}}>
-<div style={{display:"flex",gap:7,alignItems:"center",flexWrap:"wrap"}}>
-<input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"6px 9px",fontSize:12,outline:"none",flex:1,minWidth:130}}/>
-<select value={newSeason} onChange={e=>setNewSeason(e.target.value)} style={{background:C.surface,border:`1px solid ${C.border}`,color:C.text,padding:"6px 8px",borderRadius:6,fontSize:12,outline:"none"}}>
-<option value="S2">S2</option><option value="S1">S1</option>
-</select>
-<button onClick={addRow} style={{background:C.accent,border:"none",color:C.bg,padding:"7px 14px",borderRadius:7,fontSize:12,fontWeight:700,cursor:"pointer"}}>+ Add Row</button>
-</div>
-</td>
-</tr>
 </tbody>
 </table>
 </div>
-<div style={{display:"flex",gap:12,padding:"10px 14px",fontSize:11,color:C.muted,flexWrap:"wrap"}}>
+<div style={{display:"flex",gap:12,padding:"8px 14px",fontSize:10,color:C.muted,flexWrap:"wrap"}}>
 <span><span style={{color:C.accent}}>■</span> 150+</span>
 <span><span style={{color:C.green}}>■</span> 120–149</span>
 <span><span style={{color:C.text}}>■</span> 81–119</span>
@@ -1201,7 +1231,7 @@ const allForHigh=useMemo(()=>getStats(games,season),[games,season]);
 const cats=[
 {t:"Highest Single Game",icon:"🎳",rows:[...allForHigh].filter(s=>s.gameCount>0).sort((a,b)=>b.high-a.high).slice(0,5).map(s=>({p:s.player,v:s.high,sub:fd(s.rawGames?.find(g=>g.score===s.high)?.date)||""}))},
 {t:"Season Average",icon:"📊",rows:stats.slice(0,5).map(s=>({p:s.player,v:s.avg?.toFixed(1),sub:`${s.gameCount} games`}))},
-{t:"Hottest Right Now",icon:"🔥",rows:[...stats].filter(x=>x.last5!=null).sort((a,b)=>(b.recentForm||0)-(a.recentForm||0)).slice(0,5).map(s=>({p:s.player,v:fdelta(s.recentForm),sub:`last 5: ${s.last5?.toFixed(1)}`}))},
+{t:"Hottest Right Now",icon:"🔥",rows:[...stats].filter(x=>x.last5!=null).sort((a,b)=>(b.momentum||0)-(a.momentum||0)).slice(0,5).map(s=>({p:s.player,v:fdelta(s.momentum),sub:`last 5: ${s.last5?.toFixed(1)}`}))},
 {t:"Best 5-Game Stretch",icon:"⭐",rows:[...stats].sort((a,b)=>(b.stretch?.avg||0)-(a.stretch?.avg||0)).slice(0,5).map(s=>({p:s.player,v:s.stretch?.avg?.toFixed(1)||"—",sub:"avg over best 5"}))},
 {t:"Most Consistent",icon:"🎯",rows:[...stats].sort((a,b)=>a.stdDev-b.stdDev).slice(0,5).map(s=>({p:s.player,v:s.stdDev?.toFixed(1),sub:"std dev (lower = better)"}))},
 {t:"Biggest Single-Night Swing",icon:"⚡",rows:[...allForHigh].filter(x=>x.swing).sort((a,b)=>b.swing.swing-a.swing.swing).slice(0,5).map(s=>({p:s.player,v:`${s.swing.swing}p`,sub:fd(s.swing.date)}))},
