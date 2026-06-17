@@ -1265,7 +1265,9 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
   const [newSeason,setNewSeason]=useState(season||"S2");
   const [saved,setSaved]=useState(false);
   const [pendingRows,setPendingRows]=useState([]);
-  const lastAddRef=useRef(null);
+  const pendingRowsRef=useRef([]);
+  // Keep ref in sync with state for StrictMode-safe addRow
+  useEffect(()=>{pendingRowsRef.current=pendingRows;},[pendingRows]);
   const idRef=useRef(Date.now());
 
   // Update newSeason when global season changes
@@ -1356,13 +1358,14 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
   function addRow(e){
     if(e){e.preventDefault();e.stopPropagation();}
     if(!newDate)return;
-    // Deduplicate: ignore if same date added within 300ms
-    const key=newDate+newSeason;
-    const now=Date.now();
-    if(lastAddRef.current&&lastAddRef.current.key===key&&now-lastAddRef.current.time<300)return;
-    lastAddRef.current={key,time:now};
-    const uid=now+Math.random();
-    setPendingRows(prev=>[...prev,{date:newDate,season:newSeason,uid}]);
+    // StrictMode-safe: read current rows from ref (not state), build new array,
+    // write it back to ref AND state. If StrictMode double-invokes setPendingRows'
+    // updater callback, both invocations see the same ref snapshot and produce
+    // identical arrays — React deduplicates them. addRow itself is only called once.
+    const uid=Date.now();
+    const next=[...pendingRowsRef.current,{date:newDate,season:newSeason,uid}];
+    pendingRowsRef.current=next;
+    setPendingRows(next);
   }
 
   const dateGroups=useMemo(()=>{
