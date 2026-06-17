@@ -1221,9 +1221,15 @@ function PlayersPage({games,players,season,focusPlayer,setFP}){
 
 // ─── SCORE SHEET ───────────────────────────────────────────────────────────────
 function ScoresPage({games,season,addGame,updateGame,deleteGame}){
-  const [newDate,setNewDate]=useState(()=>new Date().toISOString().split("T")[0]);
+  const today=new Date().toISOString().split("T")[0];
+  const [newDate,setNewDate]=useState(today);
+  const [newSeason,setNewSeason]=useState(season||"S2");
   const [saved,setSaved]=useState(false);
-  const [pendingDates,setPendingDates]=useState([]);
+  const [pendingRows,setPendingRows]=useState([]); // {date, season, rowIndex}
+  const idRef=useRef(Date.now());
+
+  // Update newSeason when global season changes
+  useEffect(()=>setNewSeason(season),[season]);
 
   // Sort players left-to-right by most games played in current season
   const orderedPlayers=useMemo(()=>{
@@ -1236,11 +1242,8 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
     games.filter(g=>g.season===season)
   ,[games,season]);
 
-  // Build lookup and rows together so ordering is consistent
-  // Within a date: sort by ts (timestamp) ascending = chronological order
-  // Display: most recent date first, most recent game within date on top (reversed rowIndex)
+  // Build lookup and rows: most recent date first, within date most recent game on top
   const {rows,lookup}=useMemo(()=>{
-    // Group games by date, then by player, sorted by ts within player
     const byDate={};
     filtered.forEach(g=>{
       if(!byDate[g.date])byDate[g.date]={season:g.season,byPlayer:{}};
@@ -1248,31 +1251,37 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
       if(!bp[g.player])bp[g.player]=[];
       bp[g.player].push(g);
     });
-    // Sort each player's games by ts ascending (chronological)
+    // Sort each player's games by ts ascending
     Object.values(byDate).forEach(({byPlayer})=>{
       Object.values(byPlayer).forEach(arr=>arr.sort((a,b)=>(a.ts??a.id)-(b.ts??b.id)));
     });
-    // Add pending dates
-    pendingDates.filter(pd=>!byDate[pd.date]).forEach(pd=>{
-      byDate[pd.date]={season:pd.season,byPlayer:{}};
+    // Add pending rows that aren't already in data
+    pendingRows.forEach(pr=>{
+      if(!byDate[pr.date])byDate[pr.date]={season:pr.season,byPlayer:{}};
     });
-    // Build rows (most recent date first)
+    // Build rows most recent first, within date most recent on top
     const rowList=[];
     const map={};
+    // get max rows needed per date including pending
+    const pendingByDate={};
+    pendingRows.forEach(pr=>{
+      if(!pendingByDate[pr.date])pendingByDate[pr.date]=0;
+      pendingByDate[pr.date]++;
+    });
     Object.entries(byDate).sort(([a],[b])=>new Date(b)-new Date(a)).forEach(([date,{season,byPlayer}])=>{
-      const maxRows=Object.values(byPlayer).length>0?Math.max(...Object.values(byPlayer).map(a=>a.length),1):1;
-      // For each row slot, assign games in reversed order (slot 0 = most recent)
+      const dataMaxRows=Object.values(byPlayer).length>0?Math.max(...Object.values(byPlayer).map(a=>a.length)):0;
+      const pendingExtra=pendingByDate[date]||0;
+      const maxRows=Math.max(dataMaxRows,1)+pendingExtra;
       for(let r=0;r<maxRows;r++){
         rowList.push({date,rowIndex:r,season});
-        // reversed: slot 0 = last game (highest chronological index)
-        Object.entries(byPlayer).forEach(([player,games])=>{
-          const reversed=[...games].reverse();
+        Object.entries(byPlayer).forEach(([player,gs])=>{
+          const reversed=[...gs].reverse();
           if(reversed[r])map[`${date}_${r}_${player}`]=reversed[r];
         });
       }
     });
     return{rows:rowList,lookup:map};
-  },[filtered,pendingDates]);
+  },[filtered,pendingRows]);
 
   function flash(){setSaved(true);setTimeout(()=>setSaved(false),1200);}
 
@@ -1294,29 +1303,37 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
     flash();
   }
 
+  function handleDateEdit(oldDate,newDateVal,rowSeason){
+    const trimmed=newDateVal.trim();
+    if(!trimmed||trimmed===oldDate)return;
+    // Update all games on this date
+    games.filter(g=>g.date===oldDate&&g.season===rowSeason).forEach(g=>{
+      updateGame(g.id,{...g,date:trimmed});
+    });
+    flash();
+  }
+
   function addRow(){
     if(!newDate)return;
-    // don't add duplicate
-    setPendingDates(prev=>[...prev.filter(d=>d.date!==newDate),{date:newDate,season}]);
+    setPendingRows(prev=>[...prev,{date:newDate,season:newSeason}]);
   }
 
   const dateGroups=useMemo(()=>{
     const seen=new Set(),idx={};
-    rows.forEach((r,i)=>{if(!seen.has(r.date)){seen.add(r.date);idx[r.date]=Object.keys(idx).length;}});
+    rows.forEach((r)=>{if(!seen.has(r.date)){seen.add(r.date);idx[r.date]=Object.keys(idx).length;}});
     return idx;
   },[rows]);
 
-  const CW=56; // wide enough for 5-letter names
+  const CW=56;
 
   return<div style={{padding:"10px 0"}}>
-    {/* Header row — no season selector, follows global */}
     <div style={{display:"flex",gap:8,alignItems:"center",padding:"0 14px",marginBottom:6}}>
       <div style={{...DS,fontSize:16,fontWeight:800,color:C.text,flex:1}}>Score Sheet</div>
       {saved&&<span style={{fontSize:11,color:C.green,fontWeight:600}}>✓ Saved</span>}
     </div>
-    <div style={{fontSize:11,color:C.muted,padding:"0 14px",marginBottom:8}}>Tap a cell · clear to delete · Tab or Enter to move</div>
+    <div style={{fontSize:11,color:C.muted,padding:"0 14px",marginBottom:8}}>Tap a cell · clear to delete · Tab or Enter to move · tap date to edit</div>
 
-    {/* Add row — pinned at top, minimal: just date + button */}
+    {/* Add row */}
     <div style={{padding:"0 14px 10px",display:"flex",gap:8,alignItems:"center"}}>
       <input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)}
         style={{background:C.surface,border:`1px solid ${C.accent}`,borderRadius:8,color:C.text,padding:"8px 10px",fontSize:13,outline:"none",flex:1}}/>
@@ -1326,7 +1343,6 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
       </button>
     </div>
 
-    {/* Table — horizontal scroll with frozen date column */}
     <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
       <table style={{borderCollapse:"collapse",tableLayout:"fixed"}}>
         <colgroup>
@@ -1345,8 +1361,18 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
             const dateIdx=dateGroups[row.date]??0;
             const rowBg=dateIdx%2===0?C.card:C.surface;
             return<tr key={`${row.date}_${row.rowIndex}`} style={{background:rowBg}}>
-              <td style={{padding:"1px 8px",position:"sticky",left:0,zIndex:1,background:rowBg,minWidth:84,maxWidth:84,borderRight:`1px solid ${C.border}44`}}>
-                {isFirst&&<span style={{...DS,fontSize:11,fontWeight:700,color:C.text,whiteSpace:"nowrap"}}>{fd(row.date)}</span>}
+              <td style={{padding:"1px 4px",position:"sticky",left:0,zIndex:1,background:rowBg,minWidth:84,maxWidth:84,borderRight:`1px solid ${C.border}44`}}>
+                {isFirst
+                  ? <input
+                      type="date"
+                      defaultValue={row.date}
+                      key={row.date}
+                      onBlur={e=>handleDateEdit(row.date,e.target.value,row.season)}
+                      onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+                      style={{background:"transparent",border:"none",outline:"none",color:C.text,fontSize:11,fontWeight:700,fontFamily:"'Barlow Condensed',sans-serif",width:"100%",padding:"5px 2px",cursor:"pointer"}}
+                    />
+                  : null
+                }
               </td>
               {orderedPlayers.map(p=>{
                 const game=lookup[`${row.date}_${row.rowIndex}_${p}`];
@@ -1377,23 +1403,64 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
   </div>;
 }
 
+
+function calcWinsAndPlacement(games, season){
+  const filtered = season ? games.filter(g=>g.season===season) : games;
+  const byDate = {};
+  filtered.forEach(g=>{
+    if(!byDate[g.date]) byDate[g.date] = {};
+    if(!byDate[g.date][g.player]) byDate[g.date][g.player] = [];
+    byDate[g.date][g.player].push(g);
+  });
+  Object.values(byDate).forEach(byPlayer=>{
+    Object.values(byPlayer).forEach(gs=>gs.sort((a,b)=>(a.ts??a.id)-(b.ts??b.id)));
+  });
+  const stats = {};
+  PLAYERS.forEach(p=>{ stats[p]={wins:0,totalGames:0,totalPlace:0,placementGames:0}; });
+  Object.entries(byDate).forEach(([date, byPlayer])=>{
+    const maxRows = Math.max(...Object.values(byPlayer).map(gs=>gs.length));
+    for(let row=0; row<maxRows; row++){
+      const rowGames = [];
+      Object.entries(byPlayer).forEach(([player, gs])=>{
+        if(gs[row]) rowGames.push({player, score:gs[row].score});
+      });
+      if(rowGames.length < 2) continue;
+      const ranked = [...rowGames].sort((a,b)=>b.score-a.score);
+      const winner = ranked[0];
+      rowGames.forEach(({player})=>{
+        const place = ranked.findIndex(r=>r.player===player) + 1;
+        if(!stats[player]) stats[player]={wins:0,totalGames:0,totalPlace:0,placementGames:0};
+        stats[player].totalGames++;
+        stats[player].totalPlace += place;
+        stats[player].placementGames++;
+        if(player === winner.player && rowGames.length >= 3){
+          stats[player].wins++;
+        }
+      });
+    }
+  });
+  return stats;
+}
 function RecordCard({cat,topColor}){
   return<div style={{background:"#181B25",border:"1px solid #252A38",borderRadius:12,padding:"13px 14px",marginBottom:9}}>
     <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
       <span style={{fontSize:16}}>{cat.icon}</span>
       <span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:".07em",color:topColor}}>{cat.t}</span>
     </div>
-    {cat.rows.map((r,i)=><div key={r.p} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:i<cat.rows.length-1?"1px solid #252A38":"none"}}>
+    {cat.rows.map((r,i)=><div key={r.p||i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:i<cat.rows.length-1?"1px solid #252A38":"none"}}>
       <div style={{display:"flex",alignItems:"center",gap:8}}>
         <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:13,fontWeight:800,color:i===0?topColor:"#5A6278",width:15,textAlign:"center"}}>{i+1}</span>
         <div><div style={{fontSize:13,fontWeight:i===0?700:400}}>{r.p}</div><div style={{fontSize:10,color:"#5A6278"}}>{r.sub}</div></div>
       </div>
       <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:19,fontWeight:800,color:i===0?topColor:"#EEF0F8",flexShrink:0,marginLeft:8}}>{r.v}</span>
     </div>)}
+    {cat.rows.length===0&&<div style={{fontSize:12,color:"#5A6278",textAlign:"center",padding:"8px 0"}}>No data yet</div>}
   </div>;
 }
 
 function RecordsPage({games}){
+  const [filter,setFilter]=useState("positive");
+  
   const allStats=useMemo(()=>PLAYERS.map(p=>{
     const pg=games.filter(g=>g.player===p).sort((a,b)=>new Date(a.date)-new Date(b.date)||(a.ts??a.id)-(b.ts??b.id));
     if(!pg.length)return null;
@@ -1409,7 +1476,6 @@ function RecordsPage({games}){
       const a=mean(dg.map(g=>g.score));
       if(a>bestNightAvg){bestNightAvg=a;bestNightDate=d;}
       if(a<worstNightAvg){worstNightAvg=a;worstNightDate=d;}
-      // consecutive swings within session
       const sorted=[...dg].sort((a,b)=>(a.ts??a.id)-(b.ts??b.id));
       for(let i=1;i<sorted.length;i++){
         const diff=sorted[i].score-sorted[i-1].score;
@@ -1426,10 +1492,12 @@ function RecordsPage({games}){
     return{player:p,gameCount:n,avg,high:Math.max(...sc),low:Math.min(...sc),
       stdDev:n>=2?sd(sc):null,
       bestNightAvg,bestNightDate,worstNightAvg,worstNightDate,
-      biggestUp,biggestDown,
-      hotStreak,coldStreak,
+      biggestUp,biggestDown,hotStreak,coldStreak,
       bestStr,worstStr,highGame,lowGame};
   }).filter(Boolean),[games]);
+
+  // Win/placement stats — all time
+  const wpStats=useMemo(()=>calcWinsAndPlacement(games,null),[games]);
 
   function dateRange(d1,d2){
     if(!d1)return"";
@@ -1441,7 +1509,47 @@ function RecordsPage({games}){
   const qualified=useMemo(()=>allStats.filter(s=>s.gameCount>=MIN_GAMES),[allStats]);
   const qualified2=useMemo(()=>allStats.filter(s=>s.gameCount>=2),[allStats]);
 
-  const positive=useMemo(()=>[
+  // Group score leaderboards — game level (each row = one game)
+  const groupGames=useMemo(()=>{
+    const byDate={};
+    games.forEach(g=>{
+      if(!byDate[g.date])byDate[g.date]={};
+      if(!byDate[g.date][g.player])byDate[g.date][g.player]=[];
+      byDate[g.date][g.player].push(g);
+    });
+    const rows=[];
+    Object.entries(byDate).forEach(([date,byPlayer])=>{
+      const maxRows=Math.max(...Object.values(byPlayer).map(gs=>gs.length));
+      for(let r=0;r<maxRows;r++){
+        const rowScores=[];
+        Object.entries(byPlayer).forEach(([player,gs])=>{
+          const sorted=[...gs].sort((a,b)=>(a.ts??a.id)-(b.ts??b.id));
+          if(sorted[r])rowScores.push({player,score:sorted[r].score});
+        });
+        if(rowScores.length>=2){
+          const total=rowScores.reduce((s,g)=>s+g.score,0);
+          const avg=total/rowScores.length;
+          rows.push({date,playerCount:rowScores.length,avg,total,players:rowScores.map(g=>g.player)});
+        }
+      }
+    });
+    return rows;
+  },[games]);
+
+  const grpSmallBest=useMemo(()=>[...groupGames].filter(s=>s.playerCount<=4).sort((a,b)=>b.avg-a.avg).slice(0,5).map(s=>({p:s.players.join(", "),v:s.avg.toFixed(1),sub:`${s.playerCount} players · ${fd(s.date)}`})),[groupGames]);
+  const grpSmallWorst=useMemo(()=>[...groupGames].filter(s=>s.playerCount<=4).sort((a,b)=>a.avg-b.avg).slice(0,5).map(s=>({p:s.players.join(", "),v:s.avg.toFixed(1),sub:`${s.playerCount} players · ${fd(s.date)}`})),[groupGames]);
+  const grpLargeBest=useMemo(()=>[...groupGames].filter(s=>s.playerCount>=5).sort((a,b)=>b.avg-a.avg).slice(0,5).map(s=>({p:s.players.slice(0,3).join(", ")+(s.players.length>3?` +${s.players.length-3}`:""),v:s.avg.toFixed(1),sub:`${s.playerCount} players · ${fd(s.date)}`})),[groupGames]);
+  const grpLargeWorst=useMemo(()=>[...groupGames].filter(s=>s.playerCount>=5).sort((a,b)=>a.avg-b.avg).slice(0,5).map(s=>({p:s.players.slice(0,3).join(", ")+(s.players.length>3?` +${s.players.length-3}`:""),v:s.avg.toFixed(1),sub:`${s.playerCount} players · ${fd(s.date)}`})),[groupGames]);
+
+  // Wins/placement rows
+  const winsRows=useMemo(()=>PLAYERS.filter(p=>wpStats[p]?.wins>0).map(p=>({
+    p,wins:wpStats[p].wins,
+    winRate:wpStats[p].totalGames>0?(wpStats[p].wins/wpStats[p].totalGames*100):0,
+    avgPlace:wpStats[p].placementGames>0?(wpStats[p].totalPlace/wpStats[p].placementGames):99,
+    games:wpStats[p].totalGames,
+  })),[wpStats]);
+
+  const positive=[
     {t:"Highest Single Game",icon:"🎳",rows:[...withGames].sort((a,b)=>b.high-a.high).slice(0,5).map(s=>({p:s.player,v:s.high,sub:fd(s.highGame?.date)||""}))},
     {t:"Best Overall Average",icon:"📊",rows:[...qualified].sort((a,b)=>b.avg-a.avg).slice(0,5).map(s=>({p:s.player,v:s.avg.toFixed(1),sub:`${s.gameCount} games`}))},
     {t:"Best Night Average",icon:"🌙",rows:[...qualified].sort((a,b)=>b.bestNightAvg-a.bestNightAvg).slice(0,5).map(s=>({p:s.player,v:s.bestNightAvg.toFixed(1),sub:fd(s.bestNightDate)}))},
@@ -1450,9 +1558,9 @@ function RecordsPage({games}){
     {t:"Longest Hot Streak",icon:"🏃",rows:[...qualified].filter(s=>s.hotStreak.count>0).sort((a,b)=>b.hotStreak.count-a.hotStreak.count).slice(0,5).map(s=>({p:s.player,v:`${s.hotStreak.count}g`,sub:dateRange(s.hotStreak.startDate,s.hotStreak.endDate)}))},
     {t:"Biggest Upward Swing",icon:"📈",rows:[...withGames].filter(s=>s.biggestUp.swing>0).sort((a,b)=>b.biggestUp.swing-a.biggestUp.swing).slice(0,5).map(s=>({p:s.player,v:`+${s.biggestUp.swing}`,sub:`${s.biggestUp.from}→${s.biggestUp.to} · ${fd(s.biggestUp.date)}`}))},
     {t:"Most Games Bowled",icon:"📅",rows:[...withGames].sort((a,b)=>b.gameCount-a.gameCount).slice(0,5).map(s=>({p:s.player,v:s.gameCount,sub:`${s.avg?.toFixed(1)} avg`}))},
-  ],[allStats,withGames,qualified,qualified2]);
+  ];
 
-  const negative=useMemo(()=>[
+  const negative=[
     {t:"Lowest Single Game",icon:"😬",rows:[...withGames].sort((a,b)=>a.low-b.low).slice(0,5).map(s=>({p:s.player,v:s.low,sub:fd(s.lowGame?.date)||""}))},
     {t:"Lowest Average",icon:"📉",rows:[...qualified].sort((a,b)=>a.avg-b.avg).slice(0,5).map(s=>({p:s.player,v:s.avg.toFixed(1),sub:`${s.gameCount} games`}))},
     {t:"Worst Night Average",icon:"💀",rows:[...qualified].sort((a,b)=>a.worstNightAvg-b.worstNightAvg).slice(0,5).map(s=>({p:s.player,v:s.worstNightAvg.toFixed(1),sub:fd(s.worstNightDate)}))},
@@ -1460,21 +1568,48 @@ function RecordsPage({games}){
     {t:"Most Inconsistent",icon:"🎲",rows:[...qualified2].sort((a,b)=>(b.stdDev||0)-(a.stdDev||0)).slice(0,5).map(s=>({p:s.player,v:`±${s.stdDev.toFixed(1)}`,sub:`avg ${s.avg.toFixed(1)}`}))},
     {t:"Longest Cold Streak",icon:"🦽",rows:[...qualified].filter(s=>s.coldStreak.count>0).sort((a,b)=>b.coldStreak.count-a.coldStreak.count).slice(0,5).map(s=>({p:s.player,v:`${s.coldStreak.count}g`,sub:dateRange(s.coldStreak.startDate,s.coldStreak.endDate)}))},
     {t:"Biggest Downward Swing",icon:"📉",rows:[...withGames].filter(s=>s.biggestDown.swing>0).sort((a,b)=>b.biggestDown.swing-a.biggestDown.swing).slice(0,5).map(s=>({p:s.player,v:`-${s.biggestDown.swing}`,sub:`${s.biggestDown.from}→${s.biggestDown.to} · ${fd(s.biggestDown.date)}`}))},
-  ],[allStats,withGames,qualified,qualified2]);
+  ];
+
+  const group=[
+    {t:"Best Game (4 or fewer)",icon:"🏅",rows:grpSmallBest},
+    {t:"Worst Game (4 or fewer)",icon:"😶",rows:grpSmallWorst},
+    {t:"Best Game (5 or more)",icon:"🏆",rows:grpLargeBest},
+    {t:"Worst Game (5 or more)",icon:"💀",rows:grpLargeWorst},
+  ];
+
+  const competitive=[
+    {t:"Most Wins",icon:"🥇",rows:[...winsRows].sort((a,b)=>b.wins-a.wins).slice(0,5).map(r=>({p:r.p,v:r.wins,sub:`${r.winRate.toFixed(1)}% win rate · ${r.games} games`}))},
+    {t:"Best Win Rate",icon:"🎯",rows:[...winsRows].filter(r=>r.games>=MIN_GAMES).sort((a,b)=>b.winRate-a.winRate).slice(0,5).map(r=>({p:r.p,v:`${r.winRate.toFixed(1)}%`,sub:`${r.wins} wins · ${r.games} games`}))},
+    {t:"Best Average Placement",icon:"📊",rows:[...winsRows].filter(r=>r.games>=MIN_GAMES).sort((a,b)=>a.avgPlace-b.avgPlace).slice(0,5).map(r=>({p:r.p,v:`#${r.avgPlace.toFixed(1)}`,sub:`${r.games} games`}))},
+    {t:"Worst Average Placement",icon:"😬",rows:[...winsRows].filter(r=>r.games>=MIN_GAMES).sort((a,b)=>b.avgPlace-a.avgPlace).slice(0,5).map(r=>({p:r.p,v:`#${r.avgPlace.toFixed(1)}`,sub:`${r.games} games`}))},
+  ];
+
+  const FILTERS=[
+    {id:"positive",l:"🏆 Positive"},
+    {id:"negative",l:"📛 Negative"},
+    {id:"group",l:"👥 Group"},
+    {id:"competitive",l:"🏅 Competitive"},
+  ];
+
+  const activeCats=filter==="positive"?positive:filter==="negative"?negative:filter==="group"?group:competitive;
+  const topColor=filter==="negative"?C.red:filter==="group"?C.blue:filter==="competitive"?"#A78BFA":C.accent;
 
   return<div style={{maxWidth:700,margin:"0 auto",padding:"14px 14px"}}>
     <div style={{...DS,fontSize:18,fontWeight:800,color:C.text,marginBottom:2}}>All Time Records</div>
-    <div style={{fontSize:12,color:C.muted,marginBottom:16}}>Both seasons combined · {games.length} total games</div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:0,alignItems:"start"}}>
-      <div style={{paddingRight:6}}>
-        <div style={{fontSize:10,fontWeight:700,color:C.accent,textTransform:"uppercase",letterSpacing:".09em",marginBottom:10}}>🏆 Positive Records</div>
-        {positive.map(cat=><RecordCard key={cat.t} cat={cat} topColor={C.accent}/>)}
-      </div>
-      <div style={{paddingLeft:6}}>
-        <div style={{fontSize:10,fontWeight:700,color:C.red,textTransform:"uppercase",letterSpacing:".09em",marginBottom:10}}>📛 Negative Records</div>
-        {negative.map(cat=><RecordCard key={cat.t} cat={cat} topColor={C.red}/>)}
-      </div>
+    <div style={{fontSize:12,color:C.muted,marginBottom:14}}>Both seasons combined · {games.length} total games</div>
+
+    {/* Filter tabs */}
+    <div style={{display:"flex",gap:6,marginBottom:16,overflowX:"auto",paddingBottom:2}}>
+      {FILTERS.map(f=><button key={f.id} onClick={()=>setFilter(f.id)} style={{
+        background:filter===f.id?C.accent:C.card,
+        border:`1px solid ${filter===f.id?C.accent:C.border}`,
+        color:filter===f.id?C.bg:C.text,
+        padding:"7px 14px",borderRadius:20,fontSize:12,fontWeight:600,
+        cursor:"pointer",whiteSpace:"nowrap",flexShrink:0,
+      }}>{f.l}</button>)}
     </div>
+
+    {activeCats.map(cat=><RecordCard key={cat.t} cat={cat} topColor={topColor}/>)}
   </div>;
 }
 
