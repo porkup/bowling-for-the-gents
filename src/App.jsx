@@ -1579,24 +1579,33 @@ function RecordsPage({games}){
       if(!byDateRound[key])byDateRound[key]={date:g.date,round:roundKey,scores:[]};
       byDateRound[key].scores.push(g);
     });
-    // For games without round field, group by date+ts-derived position
+    // For games without round field, infer round by ts-order per player per date
     const noRound=games.filter(g=>g.round==null);
     if(noRound.length>0){
+      // Sort each player's games on a date by ts, assign _inferredRound by position
       const byDatePlayer={};
       noRound.forEach(g=>{
         const k=g.date+"_"+g.player;
         if(!byDatePlayer[k])byDatePlayer[k]=[];
         byDatePlayer[k].push(g);
       });
-      // Sort by ts, assign round by position
       Object.values(byDatePlayer).forEach(gs=>{
         gs.sort((a,b)=>(a.ts??a.id)-(b.ts??b.id));
         gs.forEach((g,i)=>{g._inferredRound=i;});
       });
+      // Now group inferred games into byDateRound so they appear in rows
+      const byDateInferred={};
+      noRound.forEach(g=>{
+        const key=g.date+"_inferred_"+g._inferredRound;
+        if(!byDateInferred[key])byDateInferred[key]={date:g.date,round:g._inferredRound,scores:[]};
+        byDateInferred[key].scores.push(g);
+      });
+      // Merge into byDateRound under unique keys that won't collide with real rounds
+      Object.entries(byDateInferred).forEach(([k,v])=>{byDateRound[k]=v;});
     }
     const rows=[];
     Object.values(byDateRound).forEach(({date,round,scores})=>{
-      if(round===-1)return; // handled separately
+      if(round===-1)return;
       const players=scores.map(g=>({player:g.player,score:g.score}));
       if(players.length>=2){
         const avg=players.reduce((s,g)=>s+g.score,0)/players.length;
