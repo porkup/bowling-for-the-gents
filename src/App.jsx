@@ -1561,26 +1561,28 @@ function RecordsPage({games}){
 
   // Group score leaderboards — game level (each row = one game)
   const groupGames=useMemo(()=>{
-    // Group by date then player, sort each player's games by ts within that date only
+    // Build the same lookup as the score sheet — group by date+player, sort by ts,
+    // then assign rowIndex so each player's game at the same rowIndex = same round
     const byDate={};
     games.forEach(g=>{
       if(!byDate[g.date])byDate[g.date]={};
       if(!byDate[g.date][g.player])byDate[g.date][g.player]=[];
       byDate[g.date][g.player].push(g);
     });
-    // Sort each player's games within a date by ts ascending (chronological within that night)
+    // Sort each player's games within a date chronologically
     Object.values(byDate).forEach(byPlayer=>{
       Object.values(byPlayer).forEach(gs=>{
-        // Use ts if available and meaningful (>1000 = real timestamp), else keep insertion order
         const hasRealTs=gs.some(g=>g.ts>10000);
         if(hasRealTs) gs.sort((a,b)=>(a.ts??0)-(b.ts??0));
-        // otherwise keep as-is (insertion order = correct order for old data)
+        // else keep insertion order (matches original spreadsheet row order)
       });
     });
     const rows=[];
     Object.entries(byDate).forEach(([date,byPlayer])=>{
       const maxRows=Math.max(...Object.values(byPlayer).map(gs=>gs.length));
       for(let r=0;r<maxRows;r++){
+        // Each row = games at position r for each player who has one
+        // This matches exactly one row in the score sheet
         const rowScores=[];
         Object.entries(byPlayer).forEach(([player,gs])=>{
           if(gs[r])rowScores.push({player,score:gs[r].score});
@@ -1588,7 +1590,8 @@ function RecordsPage({games}){
         if(rowScores.length>=2){
           const total=rowScores.reduce((s,g)=>s+g.score,0);
           const avg=total/rowScores.length;
-          rows.push({date,playerCount:rowScores.length,avg,total,players:rowScores.map(g=>g.player)});
+          rows.push({date,rowIndex:r,playerCount:rowScores.length,avg,total,
+            players:rowScores.sort((a,b)=>b.score-a.score).map(g=>g.player)});
         }
       }
     });
