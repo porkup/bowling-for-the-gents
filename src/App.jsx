@@ -1550,12 +1550,12 @@ function RecordsPage({games}){
   const grpLargeWorst=useMemo(()=>[...groupGames].filter(s=>s.playerCount>=5).sort((a,b)=>a.avg-b.avg).slice(0,5).map(s=>({p:s.players.join(", "),v:s.avg.toFixed(1),sub:`${s.playerCount} players · ${fd(s.date)}`})),[groupGames]);
 
   // Wins/placement rows
-  const winsRows=useMemo(()=>PLAYERS.filter(p=>wpStats[p]?.games>0).map(p=>({
+  const winsRows=useMemo(()=>PLAYERS.filter(p=>wpStats[p]?.totalGames>0).map(p=>({
     p,wins:wpStats[p].wins||0,
     winRate:wpStats[p].totalGames>0?((wpStats[p].wins||0)/wpStats[p].totalGames*100):0,
     avgPlace:wpStats[p].placementGames>0?(wpStats[p].totalPlace/wpStats[p].placementGames):99,
     avgOpp:wpStats[p].wins>0?(wpStats[p].totalOpponentsInWins/wpStats[p].wins):0,
-    games:wpStats[p].totalGames,
+    games:wpStats[p].totalGames||0,
   })),[wpStats]);
 
   const positive=[
