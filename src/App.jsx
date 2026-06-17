@@ -957,12 +957,10 @@ function HomePage({games,season,setPage,setFP}){
       {/* Recent Developments */}
       {devs.length>0&&<div style={{marginBottom:18}}>
         <div style={{...DS,fontSize:16,fontWeight:800,color:C.text,marginBottom:9}}>Recent Developments</div>
-        {devs.map((d,i)=><div key={i} style={{background:C.card,border:`1px solid ${C.border}`,borderLeft:`3px solid ${d.bc}`,borderRadius:10,padding:"11px 13px",display:"flex",gap:10,alignItems:"flex-start",marginBottom:6}}>
-          <span style={{fontSize:15,lineHeight:1,marginTop:1,flexShrink:0}}>{d.icon}</span>
-          <div style={{flex:1}}>
-            <p style={{fontSize:13,color:C.text,lineHeight:1.5,margin:"0 0 3px"}}>{d.text}</p>
-            <span style={{fontSize:10,color:C.muted}}>{fds(d.date)}</span>
-          </div>
+        {devs.map((d,i)=><div key={i} style={{background:C.card,border:`1px solid ${C.border}`,borderLeft:`3px solid ${d.bc}`,borderRadius:10,padding:"10px 13px",display:"flex",gap:10,alignItems:"center",marginBottom:5}}>
+          <span style={{fontSize:14,lineHeight:1,flexShrink:0}}>{d.icon}</span>
+          <p style={{fontSize:12,color:C.text,lineHeight:1.45,margin:0,flex:1}}>{d.text}</p>
+          <span style={{fontSize:10,color:C.muted,flexShrink:0,marginLeft:6,whiteSpace:"nowrap"}}>{fds(d.date)}</span>
         </div>)}
       </div>}
 
