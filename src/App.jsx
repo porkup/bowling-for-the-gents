@@ -801,7 +801,7 @@ function devRecency(eventDate, magnitudeScore, allDates){
   const sessionsAgo = idx === -1 ? 99 : allDates.length - 1 - idx;
   if(sessionsAgo === 0) return 1.0;
   // exponential decay, magnitude extends shelf life
-  return Math.exp(-sessionsAgo * 0.16 * (1 - magnitudeScore * 0.5));
+  return Math.exp(-sessionsAgo * 0.10 * (1 - magnitudeScore * 0.5));
 }
 
 function buildDevelopments(games, stats, season){
@@ -1454,7 +1454,10 @@ function calcWinsAndPlacement(games, season){
     byDate[g.date][g.player].push(g);
   });
   Object.values(byDate).forEach(byPlayer=>{
-    Object.values(byPlayer).forEach(gs=>gs.sort((a,b)=>(a.ts??a.id)-(b.ts??b.id)));
+    Object.values(byPlayer).forEach(gs=>{
+      const hasRealTs=gs.some(g=>g.ts>10000);
+      if(hasRealTs) gs.sort((a,b)=>(a.ts??0)-(b.ts??0));
+    });
   });
   const stats = {};
   PLAYERS.forEach(p=>{ stats[p]={wins:0,losses:0,totalGames:0,totalPlace:0,placementGames:0,totalOpponentsInWins:0,totalOpponentsInLosses:0}; });
@@ -1558,11 +1561,21 @@ function RecordsPage({games}){
 
   // Group score leaderboards — game level (each row = one game)
   const groupGames=useMemo(()=>{
+    // Group by date then player, sort each player's games by ts within that date only
     const byDate={};
     games.forEach(g=>{
       if(!byDate[g.date])byDate[g.date]={};
       if(!byDate[g.date][g.player])byDate[g.date][g.player]=[];
       byDate[g.date][g.player].push(g);
+    });
+    // Sort each player's games within a date by ts ascending (chronological within that night)
+    Object.values(byDate).forEach(byPlayer=>{
+      Object.values(byPlayer).forEach(gs=>{
+        // Use ts if available and meaningful (>1000 = real timestamp), else keep insertion order
+        const hasRealTs=gs.some(g=>g.ts>10000);
+        if(hasRealTs) gs.sort((a,b)=>(a.ts??0)-(b.ts??0));
+        // otherwise keep as-is (insertion order = correct order for old data)
+      });
     });
     const rows=[];
     Object.entries(byDate).forEach(([date,byPlayer])=>{
@@ -1570,8 +1583,7 @@ function RecordsPage({games}){
       for(let r=0;r<maxRows;r++){
         const rowScores=[];
         Object.entries(byPlayer).forEach(([player,gs])=>{
-          const sorted=[...gs].sort((a,b)=>(a.ts??a.id)-(b.ts??b.id));
-          if(sorted[r])rowScores.push({player,score:sorted[r].score});
+          if(gs[r])rowScores.push({player,score:gs[r].score});
         });
         if(rowScores.length>=2){
           const total=rowScores.reduce((s,g)=>s+g.score,0);
