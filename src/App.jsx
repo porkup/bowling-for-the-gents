@@ -1264,10 +1264,7 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
   const [newDate,setNewDate]=useState(today);
   const [newSeason,setNewSeason]=useState(season||"S2");
   const [saved,setSaved]=useState(false);
-  const [pendingRows,setPendingRows]=useState([]);
-  const pendingRowsRef=useRef([]);
-  // Keep ref in sync with state for StrictMode-safe addRow
-  useEffect(()=>{pendingRowsRef.current=pendingRows;},[pendingRows]);
+  const [pendingRows,setPendingRows]=useState([]); // {date, season, rowIndex}
   const idRef=useRef(Date.now());
 
   // Update newSeason when global season changes
@@ -1286,12 +1283,6 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
 
   // Build lookup and rows: most recent date first, within date most recent game on top
   const {rows,lookup}=useMemo(()=>{
-    // Deduplicate pendingRows by uid once — guards against any double-add
-    const seenP=new Set();
-    const safePending=pendingRows.filter(pr=>{
-      if(!pr.uid||seenP.has(pr.uid))return false;
-      seenP.add(pr.uid);return true;
-    });
     const byDate={};
     filtered.forEach(g=>{
       if(!byDate[g.date])byDate[g.date]={season:g.season,byPlayer:{}};
@@ -1304,14 +1295,15 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
       Object.values(byPlayer).forEach(arr=>arr.sort((a,b)=>(a.ts??a.id)-(b.ts??b.id)));
     });
     // Add pending rows that aren't already in data
-    safePending.forEach(pr=>{
+    pendingRows.forEach(pr=>{
       if(!byDate[pr.date])byDate[pr.date]={season:pr.season,byPlayer:{}};
     });
     // Build rows most recent first, within date most recent on top
     const rowList=[];
     const map={};
+    // get max rows needed per date including pending
     const pendingByDate={};
-    safePending.forEach(pr=>{
+    pendingRows.forEach(pr=>{
       if(!pendingByDate[pr.date])pendingByDate[pr.date]=0;
       pendingByDate[pr.date]++;
     });
@@ -1360,15 +1352,18 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
     flash();
   }
 
-  const addingRef=useRef(false);
-  const rowsRef=useRef([]);
-  rowsRef.current=pendingRows;
+  const addRowRef=useRef(false);
+  const pendingRowsRef=useRef([]);
+  // Keep ref in sync so addRow can read current value without functional updater
+  pendingRowsRef.current=pendingRows;
   function addRow(e){
-    if(e){e.preventDefault();e.stopPropagation();}
-    if(!newDate||addingRef.current)return;
-    addingRef.current=true;
-    setTimeout(()=>{addingRef.current=false;},500);
-    setPendingRows([...rowsRef.current,{date:newDate,season:newSeason,uid:Date.now()}]);
+    if(e)e.preventDefault();
+    if(!newDate||addRowRef.current)return;
+    addRowRef.current=true;
+    setTimeout(()=>{addRowRef.current=false;},500);
+    // Use ref snapshot instead of prev=> — StrictMode double-invokes prev=> callbacks
+    // but does NOT double-invoke addRow itself. This eliminates the double-append.
+    setPendingRows([...pendingRowsRef.current,{date:newDate,season:newSeason}]);
   }
 
   const dateGroups=useMemo(()=>{
@@ -1390,8 +1385,7 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
     <div style={{padding:"0 14px 10px",display:"flex",gap:8,alignItems:"center"}}>
       <input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)}
         style={{background:C.surface,border:`1px solid ${C.accent}`,borderRadius:8,color:C.text,padding:"8px 10px",fontSize:13,outline:"none",flex:1}}/>
-      <button 
-        onClick={addRow}
+      <button onClick={addRow}
         style={{background:C.accent,border:"none",color:C.bg,padding:"8px 16px",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
         + Add Row
       </button>
