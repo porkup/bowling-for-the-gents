@@ -1286,6 +1286,12 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
 
   // Build lookup and rows: most recent date first, within date most recent game on top
   const {rows,lookup}=useMemo(()=>{
+    // Deduplicate pendingRows by uid once — guards against any double-add
+    const seenP=new Set();
+    const safePending=pendingRows.filter(pr=>{
+      if(!pr.uid||seenP.has(pr.uid))return false;
+      seenP.add(pr.uid);return true;
+    });
     const byDate={};
     filtered.forEach(g=>{
       if(!byDate[g.date])byDate[g.date]={season:g.season,byPlayer:{}};
@@ -1298,15 +1304,14 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
       Object.values(byPlayer).forEach(arr=>arr.sort((a,b)=>(a.ts??a.id)-(b.ts??b.id)));
     });
     // Add pending rows that aren't already in data
-    pendingRows.forEach(pr=>{
+    safePending.forEach(pr=>{
       if(!byDate[pr.date])byDate[pr.date]={season:pr.season,byPlayer:{}};
     });
     // Build rows most recent first, within date most recent on top
     const rowList=[];
     const map={};
-    // get max rows needed per date including pending
     const pendingByDate={};
-    pendingRows.forEach(pr=>{
+    safePending.forEach(pr=>{
       if(!pendingByDate[pr.date])pendingByDate[pr.date]=0;
       pendingByDate[pr.date]++;
     });
@@ -1355,17 +1360,15 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
     flash();
   }
 
+  const addingRef=useRef(false);
+  const rowsRef=useRef([]);
+  rowsRef.current=pendingRows;
   function addRow(e){
     if(e){e.preventDefault();e.stopPropagation();}
-    if(!newDate)return;
-    // StrictMode-safe: read current rows from ref (not state), build new array,
-    // write it back to ref AND state. If StrictMode double-invokes setPendingRows'
-    // updater callback, both invocations see the same ref snapshot and produce
-    // identical arrays — React deduplicates them. addRow itself is only called once.
-    const uid=Date.now();
-    const next=[...pendingRowsRef.current,{date:newDate,season:newSeason,uid}];
-    pendingRowsRef.current=next;
-    setPendingRows(next);
+    if(!newDate||addingRef.current)return;
+    addingRef.current=true;
+    setTimeout(()=>{addingRef.current=false;},500);
+    setPendingRows([...rowsRef.current,{date:newDate,season:newSeason,uid:Date.now()}]);
   }
 
   const dateGroups=useMemo(()=>{
@@ -1388,8 +1391,7 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
       <input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)}
         style={{background:C.surface,border:`1px solid ${C.accent}`,borderRadius:8,color:C.text,padding:"8px 10px",fontSize:13,outline:"none",flex:1}}/>
       <button 
-        onTouchEnd={e=>{e.preventDefault();addRow(e);}}
-        onClick={e=>{if(e.detail===0)return;addRow(e);}}
+        onClick={addRow}
         style={{background:C.accent,border:"none",color:C.bg,padding:"8px 16px",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
         + Add Row
       </button>
