@@ -801,7 +801,7 @@ function devRecency(eventDate, magnitudeScore, allDates){
   const sessionsAgo = idx === -1 ? 99 : allDates.length - 1 - idx;
   if(sessionsAgo === 0) return 1.0;
   // exponential decay, magnitude extends shelf life
-  return Math.exp(-sessionsAgo * 0.2 * (1 - magnitudeScore * 0.5));
+  return Math.exp(-sessionsAgo * 0.16 * (1 - magnitudeScore * 0.5));
 }
 
 function buildDevelopments(games, stats, season){
@@ -1000,6 +1000,7 @@ function HomePage({games,season,setPage,setFP}){
 // ─── STANDINGS ─────────────────────────────────────────────────────────────────
 function StandingsPage({games,season,setPage,setFP}){
   const stats=useMemo(()=>getStats(games,season),[games,season]);
+  const wpStats=useMemo(()=>calcWinsAndPlacement(games,season),[games,season]);
   const [sortBy,setSortBy]=useState("avg");
 
   const sorted=useMemo(()=>[...stats].sort((a,b)=>{
@@ -1010,8 +1011,9 @@ function StandingsPage({games,season,setPage,setFP}){
     if(sortBy==="stretch")return(b.stretch?.avg||0)-(a.stretch?.avg||0);
     if(sortBy==="cons")return(a.stdDev??999)-(b.stdDev??999);
     if(sortBy==="games")return(b.gameCount||0)-(a.gameCount||0);
+    if(sortBy==="wins")return(wpStats[b.player]?.wins||0)-(wpStats[a.player]?.wins||0);
     return 0;
-  }),[stats,sortBy]);
+  }),[stats,sortBy,wpStats]);
 
   const SORT_COLS=[
     {id:"avg",l:"Avg"},
@@ -1021,6 +1023,7 @@ function StandingsPage({games,season,setPage,setFP}){
     {id:"stretch",l:"Stretch"},
     {id:"cons",l:"Consistency"},
     {id:"games",l:"Games"},
+    {id:"wins",l:"Wins"},
   ];
 
   function mainVal(s){
@@ -1031,6 +1034,7 @@ function StandingsPage({games,season,setPage,setFP}){
     if(sortBy==="stretch")return s.stretch?.avg!=null?s.stretch.avg.toFixed(1):"—";
     if(sortBy==="cons")return s.stdDev!=null?`±${s.stdDev.toFixed(1)}`:"—";
     if(sortBy==="games")return s.gameCount||0;
+    if(sortBy==="wins")return wpStats[s.player]?.wins||0;
     return"—";
   }
   function mainColor(s){
@@ -1048,6 +1052,7 @@ function StandingsPage({games,season,setPage,setFP}){
     if(sortBy==="stretch")return"best 5-game run";
     if(sortBy==="cons")return s.avg!=null?`avg ${s.avg.toFixed(1)}`:`${s.gameCount} games`;
     if(sortBy==="games")return s.avg!=null?`${s.avg.toFixed(1)} avg`:"no avg yet";
+    if(sortBy==="wins"){const wr=wpStats[s.player];return wr?.totalGames>0?`${((wr.wins||0)/wr.totalGames*100).toFixed(1)}% win rate`:"0 wins";}
     return`${s.gameCount} games`;
   }
 
@@ -1060,7 +1065,7 @@ function StandingsPage({games,season,setPage,setFP}){
     {/* Player rows */}
     {sorted.map((s,i)=>{
       // per-stat lock logic
-      const statLocked=(sortBy==="momentum"&&!s.canMomentum)||(sortBy==="stretch"&&!s.canStretch)||(sortBy==="cons"&&!s.canCons)||(sortBy==="last5"&&!s.canLast5);
+      const statLocked=(sortBy==="momentum"&&!s.canMomentum)||(sortBy==="stretch"&&!s.canStretch)||(sortBy==="cons"&&!s.canCons)||(sortBy==="last5"&&!s.canLast5)||(sortBy==="wins"&&s.gameCount<MIN_GAMES);
       const dimmed=statLocked;
       return<div key={s.player} onClick={()=>{setFP(s.player);setPage("players");}} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:11,padding:"12px 14px",marginBottom:6,display:"flex",alignItems:"center",gap:12,cursor:"pointer",opacity:dimmed?0.65:1}}>
         <span style={{...DS,fontSize:20,fontWeight:800,color:statLocked?C.muted:rankColor(i),width:26,flexShrink:0,textAlign:"center"}}>{statLocked?"—":i+1}</span>
@@ -1416,7 +1421,7 @@ function calcWinsAndPlacement(games, season){
     Object.values(byPlayer).forEach(gs=>gs.sort((a,b)=>(a.ts??a.id)-(b.ts??b.id)));
   });
   const stats = {};
-  PLAYERS.forEach(p=>{ stats[p]={wins:0,totalGames:0,totalPlace:0,placementGames:0}; });
+  PLAYERS.forEach(p=>{ stats[p]={wins:0,totalGames:0,totalPlace:0,placementGames:0,totalOpponentsInWins:0}; });
   Object.entries(byDate).forEach(([date, byPlayer])=>{
     const maxRows = Math.max(...Object.values(byPlayer).map(gs=>gs.length));
     for(let row=0; row<maxRows; row++){
@@ -1427,14 +1432,17 @@ function calcWinsAndPlacement(games, season){
       if(rowGames.length < 2) continue;
       const ranked = [...rowGames].sort((a,b)=>b.score-a.score);
       const winner = ranked[0];
+      const opponents = rowGames.length - 1; // total players minus winner
       rowGames.forEach(({player})=>{
         const place = ranked.findIndex(r=>r.player===player) + 1;
-        if(!stats[player]) stats[player]={wins:0,totalGames:0,totalPlace:0,placementGames:0};
+        if(!stats[player]) stats[player]={wins:0,totalGames:0,totalPlace:0,placementGames:0,totalOpponentsInWins:0};
         stats[player].totalGames++;
         stats[player].totalPlace += place;
         stats[player].placementGames++;
+        // Win requires 3+ total participants (2+ opponents)
         if(player === winner.player && rowGames.length >= 3){
           stats[player].wins++;
+          stats[player].totalOpponentsInWins += opponents;
         }
       });
     }
@@ -1538,14 +1546,15 @@ function RecordsPage({games}){
 
   const grpSmallBest=useMemo(()=>[...groupGames].filter(s=>s.playerCount<=4).sort((a,b)=>b.avg-a.avg).slice(0,5).map(s=>({p:s.players.join(", "),v:s.avg.toFixed(1),sub:`${s.playerCount} players · ${fd(s.date)}`})),[groupGames]);
   const grpSmallWorst=useMemo(()=>[...groupGames].filter(s=>s.playerCount<=4).sort((a,b)=>a.avg-b.avg).slice(0,5).map(s=>({p:s.players.join(", "),v:s.avg.toFixed(1),sub:`${s.playerCount} players · ${fd(s.date)}`})),[groupGames]);
-  const grpLargeBest=useMemo(()=>[...groupGames].filter(s=>s.playerCount>=5).sort((a,b)=>b.avg-a.avg).slice(0,5).map(s=>({p:s.players.slice(0,3).join(", ")+(s.players.length>3?` +${s.players.length-3}`:""),v:s.avg.toFixed(1),sub:`${s.playerCount} players · ${fd(s.date)}`})),[groupGames]);
-  const grpLargeWorst=useMemo(()=>[...groupGames].filter(s=>s.playerCount>=5).sort((a,b)=>a.avg-b.avg).slice(0,5).map(s=>({p:s.players.slice(0,3).join(", ")+(s.players.length>3?` +${s.players.length-3}`:""),v:s.avg.toFixed(1),sub:`${s.playerCount} players · ${fd(s.date)}`})),[groupGames]);
+  const grpLargeBest=useMemo(()=>[...groupGames].filter(s=>s.playerCount>=5).sort((a,b)=>b.avg-a.avg).slice(0,5).map(s=>({p:s.players.join(", "),v:s.avg.toFixed(1),sub:`${s.playerCount} players · ${fd(s.date)}`})),[groupGames]);
+  const grpLargeWorst=useMemo(()=>[...groupGames].filter(s=>s.playerCount>=5).sort((a,b)=>a.avg-b.avg).slice(0,5).map(s=>({p:s.players.join(", "),v:s.avg.toFixed(1),sub:`${s.playerCount} players · ${fd(s.date)}`})),[groupGames]);
 
   // Wins/placement rows
-  const winsRows=useMemo(()=>PLAYERS.filter(p=>wpStats[p]?.wins>0).map(p=>({
-    p,wins:wpStats[p].wins,
-    winRate:wpStats[p].totalGames>0?(wpStats[p].wins/wpStats[p].totalGames*100):0,
+  const winsRows=useMemo(()=>PLAYERS.filter(p=>wpStats[p]?.games>0).map(p=>({
+    p,wins:wpStats[p].wins||0,
+    winRate:wpStats[p].totalGames>0?((wpStats[p].wins||0)/wpStats[p].totalGames*100):0,
     avgPlace:wpStats[p].placementGames>0?(wpStats[p].totalPlace/wpStats[p].placementGames):99,
+    avgOpp:wpStats[p].wins>0?(wpStats[p].totalOpponentsInWins/wpStats[p].wins):0,
     games:wpStats[p].totalGames,
   })),[wpStats]);
 
@@ -1571,17 +1580,18 @@ function RecordsPage({games}){
   ];
 
   const group=[
-    {t:"Best Game (4 or fewer)",icon:"🏅",rows:grpSmallBest},
-    {t:"Worst Game (4 or fewer)",icon:"😶",rows:grpSmallWorst},
     {t:"Best Game (5 or more)",icon:"🏆",rows:grpLargeBest},
+    {t:"Best Game (4 or fewer)",icon:"🏅",rows:grpSmallBest},
     {t:"Worst Game (5 or more)",icon:"💀",rows:grpLargeWorst},
+    {t:"Worst Game (4 or fewer)",icon:"😶",rows:grpSmallWorst},
   ];
 
   const competitive=[
-    {t:"Most Wins",icon:"🥇",rows:[...winsRows].sort((a,b)=>b.wins-a.wins).slice(0,5).map(r=>({p:r.p,v:r.wins,sub:`${r.winRate.toFixed(1)}% win rate · ${r.games} games`}))},
-    {t:"Best Win Rate",icon:"🎯",rows:[...winsRows].filter(r=>r.games>=MIN_GAMES).sort((a,b)=>b.winRate-a.winRate).slice(0,5).map(r=>({p:r.p,v:`${r.winRate.toFixed(1)}%`,sub:`${r.wins} wins · ${r.games} games`}))},
-    {t:"Best Average Placement",icon:"📊",rows:[...winsRows].filter(r=>r.games>=MIN_GAMES).sort((a,b)=>a.avgPlace-b.avgPlace).slice(0,5).map(r=>({p:r.p,v:`#${r.avgPlace.toFixed(1)}`,sub:`${r.games} games`}))},
-    {t:"Worst Average Placement",icon:"😬",rows:[...winsRows].filter(r=>r.games>=MIN_GAMES).sort((a,b)=>b.avgPlace-a.avgPlace).slice(0,5).map(r=>({p:r.p,v:`#${r.avgPlace.toFixed(1)}`,sub:`${r.games} games`}))},
+    {t:"Most Wins",icon:"🥇",rows:[...winsRows].sort((a,b)=>b.wins-a.wins).map(r=>({p:r.p,v:r.wins,sub:`${r.winRate.toFixed(1)}% win rate · ${r.games} games`}))},
+    {t:"Best Win Rate",icon:"🎯",rows:[...winsRows].filter(r=>r.games>=MIN_GAMES).sort((a,b)=>b.winRate-a.winRate).map(r=>({p:r.p,v:`${r.winRate.toFixed(1)}%`,sub:`${r.wins} wins · ${r.games} games`}))},
+    {t:"Best Average Placement",icon:"📊",rows:[...winsRows].filter(r=>r.games>=MIN_GAMES).sort((a,b)=>a.avgPlace-b.avgPlace).map(r=>({p:r.p,v:`#${r.avgPlace.toFixed(1)}`,sub:`${r.games} games`}))},
+    {t:"Worst Average Placement",icon:"😬",rows:[...winsRows].filter(r=>r.games>=MIN_GAMES).sort((a,b)=>b.avgPlace-a.avgPlace).map(r=>({p:r.p,v:`#${r.avgPlace.toFixed(1)}`,sub:`${r.games} games`}))},
+    {t:"Avg Opponents Per Win",icon:"👥",rows:[...winsRows].filter(r=>r.wins>0).sort((a,b)=>b.avgOpp-a.avgOpp).map(r=>({p:r.p,v:r.avgOpp.toFixed(1),sub:`${r.wins} wins`}))},
   ];
 
   const FILTERS=[
