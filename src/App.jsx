@@ -1301,16 +1301,22 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
     // Build rows most recent first, within date most recent on top
     const rowList=[];
     const map={};
-    // get max rows needed per date including pending
+    // Count pending rows per date, but only add extras beyond what real data already covers.
+    // This prevents ghost rows after Firebase writes back and games state updates.
     const pendingByDate={};
     pendingRows.forEach(pr=>{
-      if(!pendingByDate[pr.date])pendingByDate[pr.date]=0;
-      pendingByDate[pr.date]++;
+      const realRows=byDate[pr.date]?.byPlayer
+        ?Math.max(0,...Object.values(byDate[pr.date].byPlayer).map(a=>a.length))
+        :0;
+      const alreadyPending=pendingByDate[pr.date]||0;
+      if(realRows<=alreadyPending){
+        pendingByDate[pr.date]=alreadyPending+1;
+      }
     });
     Object.entries(byDate).sort(([a],[b])=>new Date(b)-new Date(a)).forEach(([date,{season,byPlayer}])=>{
       const dataMaxRows=Object.values(byPlayer).length>0?Math.max(...Object.values(byPlayer).map(a=>a.length)):0;
       const pendingExtra=pendingByDate[date]||0;
-      const maxRows=Math.max(dataMaxRows,1)+pendingExtra;
+      const maxRows=dataMaxRows>0?Math.max(dataMaxRows,1)+pendingExtra:pendingExtra;
       for(let r=0;r<maxRows;r++){
         rowList.push({date,rowIndex:r,season});
         Object.entries(byPlayer).forEach(([player,gs])=>{
@@ -1352,18 +1358,14 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
     flash();
   }
 
-  const addRowRef=useRef(false);
-  const pendingRowsRef=useRef([]);
-  // Keep ref in sync so addRow can read current value without functional updater
-  pendingRowsRef.current=pendingRows;
+  const lastAddTimeRef=useRef(0);
   function addRow(e){
     if(e)e.preventDefault();
-    if(!newDate||addRowRef.current)return;
-    addRowRef.current=true;
-    setTimeout(()=>{addRowRef.current=false;},500);
-    // Use ref snapshot instead of prev=> — StrictMode double-invokes prev=> callbacks
-    // but does NOT double-invoke addRow itself. This eliminates the double-append.
-    setPendingRows([...pendingRowsRef.current,{date:newDate,season:newSeason}]);
+    if(!newDate)return;
+    const now=Date.now();
+    setPendingRows(prev=>{
+      return[...prev,{date:newDate,season:newSeason,ts:now}];
+    });
   }
 
   const dateGroups=useMemo(()=>{
