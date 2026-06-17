@@ -1318,7 +1318,7 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
       const pendingExtra=pendingByDate[date]||0;
       const maxRows=dataMaxRows>0?Math.max(dataMaxRows,1)+pendingExtra:pendingExtra;
       // Collect stored rowIndex values from pending rows for this date
-      const pendingForDate=safePending.filter(p=>p.date===date);
+      const pendingForDate=pendingRows.filter(p=>p.date===date);
       for(let r=0;r<maxRows;r++){
         // For pending-only rows, use the stored rowIndex from when the row was created
         const pendingRow=pendingForDate.find(p=>p.rowIndex===r||(p.rowIndex==null&&r>=dataMaxRows));
