@@ -1317,8 +1317,12 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
       const dataMaxRows=Object.values(byPlayer).length>0?Math.max(...Object.values(byPlayer).map(a=>a.length)):0;
       const pendingExtra=pendingByDate[date]||0;
       const maxRows=dataMaxRows>0?Math.max(dataMaxRows,1)+pendingExtra:pendingExtra;
+      // Collect stored rowIndex values from pending rows for this date
+      const pendingForDate=safePending.filter(p=>p.date===date);
       for(let r=0;r<maxRows;r++){
-        rowList.push({date,rowIndex:r,season});
+        // For pending-only rows, use the stored rowIndex from when the row was created
+        const pendingRow=pendingForDate.find(p=>p.rowIndex===r||(p.rowIndex==null&&r>=dataMaxRows));
+        rowList.push({date,rowIndex:pendingRow?.rowIndex??r,season});
         Object.entries(byPlayer).forEach(([player,gs])=>{
           const reversed=[...gs].reverse();
           if(reversed[r])map[`${date}_${r}_${player}`]=reversed[r];
@@ -1363,8 +1367,21 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
     if(e)e.preventDefault();
     if(!newDate)return;
     const now=Date.now();
+    // Assign rowIndex at creation time so it's stable regardless of Firebase timing.
+    // Count: real games for this date + pending rows already queued for this date.
     setPendingRows(prev=>{
-      return[...prev,{date:newDate,season:newSeason,ts:now}];
+      const realRows=games.filter(g=>g.date===newDate).length>0
+        ?Math.max(...Object.values(
+            games.filter(g=>g.date===newDate).reduce((acc,g)=>{
+              if(!acc[g.player])acc[g.player]=[];
+              acc[g.player].push(g);
+              return acc;
+            },{})
+          ).map(a=>a.length))
+        :0;
+      const pendingForDate=prev.filter(p=>p.date===newDate).length;
+      const rowIndex=Math.max(realRows,pendingForDate);
+      return[...prev,{date:newDate,season:newSeason,ts:now,rowIndex}];
     });
   }
 
