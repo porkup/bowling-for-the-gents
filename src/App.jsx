@@ -993,6 +993,42 @@ function HomePage({games,season,setPage,setFP}){
       </div>}
 
       <button onClick={()=>setPage("standings")} style={{width:"100%",background:"none",border:`1px solid ${C.border}`,borderRadius:10,padding:"12px",color:C.accent,fontSize:13,fontWeight:600,cursor:"pointer",marginTop:4}}>View Full Standings →</button>
+
+      {/* Glossary */}
+      <div style={{marginTop:22,paddingTop:18,borderTop:`1px solid ${C.border}`}}>
+        <div style={{...DS,fontSize:15,fontWeight:800,color:C.text,marginBottom:12}}>📖 Glossary</div>
+
+        {[
+          {stat:"Average",min:1,def:"Mean score across all games this season."},
+          {stat:"High / Low Game",min:1,def:"Your best and worst single game of the season."},
+          {stat:"Games Played",min:1,def:"Total individual games bowled. Each lane counts as one game."},
+          {stat:"Last 5 Avg",min:5,def:"Average of your 5 most recent games — the best quick read on how you're bowling right now."},
+          {stat:"Momentum",min:6,def:"Last 5 avg minus your season avg. Positive = you're above your baseline lately. Negative = below it. Formula: Last5Avg − SeasonAvg."},
+          {stat:"Consistency (Std Dev)",min:2,def:"How much your scores jump around. Lower = more predictable. Calculated as the standard deviation of all your scores."},
+          {stat:"Best Stretch",min:5,def:"Your highest 5-game rolling average — your peak run of the season."},
+          {stat:"Hot 🔥",min:6,def:"Momentum ≥ +5. Your last 5 are meaningfully above your season average."},
+          {stat:"Cold ❄️",min:6,def:"Momentum ≤ −5. Your last 5 are meaningfully below your season average."},
+          {stat:"Best / Worst Night",min:1,def:"Session where your average across all games that night was highest or lowest."},
+          {stat:"Biggest Swing",min:1,def:"Largest score change between two consecutive games on the same night. Upward = big comeback. Downward = big collapse."},
+          {stat:"Wins",min:3,def:"Games where you had the highest score among all players. Requires 3+ participants in that game."},
+          {stat:"Win Rate",min:6,def:"Wins divided by total games played, as a percentage."},
+          {stat:"Avg Placement",min:6,def:"Your average finishing position across all games. 1st = best score that game. Lower number = better."},
+          {stat:"Avg Opponents Per Win/Loss",min:6,def:"Average number of other players in games you won or lost. Higher = you tend to win/lose in bigger fields."},
+          {stat:"Weighted Expected Wins",min:6,def:"Not used — we kept it simple."},
+          {stat:"Hot Streak",min:6,def:"Consecutive games where your score was above your season average."},
+          {stat:"Cold Streak",min:6,def:"Consecutive games where your score was below your season average."},
+          {stat:"Group Game Score",min:1,def:"Average score across all players in a single game row. Used to rank the best and worst group performances."},
+        ].filter(g=>g.stat!=="Weighted Expected Wins").map((g,i)=><div key={i} style={{
+          padding:"10px 0",
+          borderBottom:`1px solid ${C.border}`,
+        }}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:3}}>
+            <span style={{fontWeight:700,fontSize:13,color:C.text}}>{g.stat}</span>
+            {g.min>1&&<span style={{fontSize:10,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:20,padding:"2px 8px",whiteSpace:"nowrap",flexShrink:0}}>{g.min}+ games</span>}
+          </div>
+          <p style={{fontSize:12,color:C.muted,lineHeight:1.5,margin:0}}>{g.def}</p>
+        </div>)}
+      </div>
     </div>
   </div>;
 }
@@ -1421,7 +1457,7 @@ function calcWinsAndPlacement(games, season){
     Object.values(byPlayer).forEach(gs=>gs.sort((a,b)=>(a.ts??a.id)-(b.ts??b.id)));
   });
   const stats = {};
-  PLAYERS.forEach(p=>{ stats[p]={wins:0,totalGames:0,totalPlace:0,placementGames:0,totalOpponentsInWins:0}; });
+  PLAYERS.forEach(p=>{ stats[p]={wins:0,losses:0,totalGames:0,totalPlace:0,placementGames:0,totalOpponentsInWins:0,totalOpponentsInLosses:0}; });
   Object.entries(byDate).forEach(([date, byPlayer])=>{
     const maxRows = Math.max(...Object.values(byPlayer).map(gs=>gs.length));
     for(let row=0; row<maxRows; row++){
@@ -1435,7 +1471,7 @@ function calcWinsAndPlacement(games, season){
       const opponents = rowGames.length - 1; // total players minus winner
       rowGames.forEach(({player})=>{
         const place = ranked.findIndex(r=>r.player===player) + 1;
-        if(!stats[player]) stats[player]={wins:0,totalGames:0,totalPlace:0,placementGames:0,totalOpponentsInWins:0};
+        if(!stats[player]) stats[player]={wins:0,losses:0,totalGames:0,totalPlace:0,placementGames:0,totalOpponentsInWins:0,totalOpponentsInLosses:0};
         stats[player].totalGames++;
         stats[player].totalPlace += place;
         stats[player].placementGames++;
@@ -1443,6 +1479,9 @@ function calcWinsAndPlacement(games, season){
         if(player === winner.player && rowGames.length >= 3){
           stats[player].wins++;
           stats[player].totalOpponentsInWins += opponents;
+        } else if(player !== winner.player && rowGames.length >= 3){
+          stats[player].losses++;
+          stats[player].totalOpponentsInLosses += opponents;
         }
       });
     }
@@ -1550,11 +1589,13 @@ function RecordsPage({games}){
   const grpLargeWorst=useMemo(()=>[...groupGames].filter(s=>s.playerCount>=5).sort((a,b)=>a.avg-b.avg).slice(0,5).map(s=>({p:s.players.join(", "),v:s.avg.toFixed(1),sub:`${s.playerCount} players · ${fd(s.date)}`})),[groupGames]);
 
   // Wins/placement rows
-  const winsRows=useMemo(()=>PLAYERS.filter(p=>wpStats[p]?.totalGames>0).map(p=>({
+  const winsRows=useMemo(()=>PLAYERS.filter(p=>(wpStats[p]?.totalGames||0)>=MIN_GAMES).map(p=>({
     p,wins:wpStats[p].wins||0,
+    losses:wpStats[p].losses||0,
     winRate:wpStats[p].totalGames>0?((wpStats[p].wins||0)/wpStats[p].totalGames*100):0,
     avgPlace:wpStats[p].placementGames>0?(wpStats[p].totalPlace/wpStats[p].placementGames):99,
     avgOpp:wpStats[p].wins>0?(wpStats[p].totalOpponentsInWins/wpStats[p].wins):0,
+    avgOppLoss:wpStats[p].losses>0?(wpStats[p].totalOpponentsInLosses/wpStats[p].losses):0,
     games:wpStats[p].totalGames||0,
   })),[wpStats]);
 
@@ -1592,6 +1633,7 @@ function RecordsPage({games}){
     {t:"Best Average Placement",icon:"📊",rows:[...winsRows].filter(r=>r.games>=MIN_GAMES).sort((a,b)=>a.avgPlace-b.avgPlace).map(r=>({p:r.p,v:`#${r.avgPlace.toFixed(1)}`,sub:`${r.games} games`}))},
     {t:"Worst Average Placement",icon:"😬",rows:[...winsRows].filter(r=>r.games>=MIN_GAMES).sort((a,b)=>b.avgPlace-a.avgPlace).map(r=>({p:r.p,v:`#${r.avgPlace.toFixed(1)}`,sub:`${r.games} games`}))},
     {t:"Avg Opponents Per Win",icon:"👥",rows:[...winsRows].filter(r=>r.wins>0).sort((a,b)=>b.avgOpp-a.avgOpp).map(r=>({p:r.p,v:r.avgOpp.toFixed(1),sub:`${r.wins} wins`}))},
+    {t:"Avg Opponents Per Loss",icon:"👥",rows:[...winsRows].filter(r=>r.losses>0).sort((a,b)=>b.avgOppLoss-a.avgOppLoss).map(r=>({p:r.p,v:r.avgOppLoss.toFixed(1),sub:`${r.losses} losses`}))},
   ];
 
   const FILTERS=[
