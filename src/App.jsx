@@ -1265,7 +1265,7 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
   const [newSeason,setNewSeason]=useState(season||"S2");
   const [saved,setSaved]=useState(false);
   const [pendingRows,setPendingRows]=useState([]);
-  const pendingCountRef=useRef(0);
+  const lastAddRef=useRef(null);
   const idRef=useRef(Date.now());
 
   // Update newSeason when global season changes
@@ -1356,7 +1356,12 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
   function addRow(e){
     if(e){e.preventDefault();e.stopPropagation();}
     if(!newDate)return;
-    const uid=Date.now()+Math.random();
+    // Deduplicate: ignore if same date added within 300ms
+    const key=newDate+newSeason;
+    const now=Date.now();
+    if(lastAddRef.current&&lastAddRef.current.key===key&&now-lastAddRef.current.time<300)return;
+    lastAddRef.current={key,time:now};
+    const uid=now+Math.random();
     setPendingRows(prev=>[...prev,{date:newDate,season:newSeason,uid}]);
   }
 
@@ -1379,7 +1384,9 @@ function ScoresPage({games,season,addGame,updateGame,deleteGame}){
     <div style={{padding:"0 14px 10px",display:"flex",gap:8,alignItems:"center"}}>
       <input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)}
         style={{background:C.surface,border:`1px solid ${C.accent}`,borderRadius:8,color:C.text,padding:"8px 10px",fontSize:13,outline:"none",flex:1}}/>
-      <button onClick={addRow}
+      <button 
+        onTouchEnd={e=>{e.preventDefault();addRow(e);}}
+        onClick={e=>{if(e.detail===0)return;addRow(e);}}
         style={{background:C.accent,border:"none",color:C.bg,padding:"8px 16px",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
         + Add Row
       </button>
